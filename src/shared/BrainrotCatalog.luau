@@ -18,10 +18,10 @@ BrainrotCatalog.SlotCosts = { 500, 2000, 8000, 25000, 75000, 200000 }
 BrainrotCatalog.SellRefundFraction = 0.5
 
 BrainrotCatalog.SpawnIntervalSeconds = 12
-BrainrotCatalog.MaxBeltBrainrots = 6
-BrainrotCatalog.BeltStartX = -28
-BrainrotCatalog.BeltEndX = 28
-BrainrotCatalog.BeltSpeedStudsPerSecond = 4
+BrainrotCatalog.MaxBeltBrainrots = 7
+BrainrotCatalog.BeltStartX = -34
+BrainrotCatalog.BeltEndX = 34
+BrainrotCatalog.BeltSpeedStudsPerSecond = 5
 BrainrotCatalog.BeltTopY = 1.5
 
 BrainrotCatalog.LockDurationSeconds = 45
@@ -36,7 +36,11 @@ BrainrotCatalog.RebirthIncomeBonus = 0.25 -- +25% income per rebirth, stacking
 BrainrotCatalog.AutosaveIntervalSeconds = 60
 
 BrainrotCatalog.PlazaRadius = 45
-BrainrotCatalog.PlotRingRadius = 62
+-- The eight base plots stand in two rows flanking the conveyor belt,
+-- four on the north side and four on the south, like the genre's hits:
+-- every base is a short run from the belt and from every rival.
+BrainrotCatalog.PlotRowZ = 34
+BrainrotCatalog.PlotRowX = { -57, -19, 19, 57 }
 BrainrotCatalog.PlotCount = 8
 
 -- ---------------------------------------------------------------------------

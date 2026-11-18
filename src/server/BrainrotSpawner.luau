@@ -24,13 +24,16 @@ local map = nil
 -- games the brainrots tower over the belt so they read clearly from a
 -- distance. Every part size and offset in the model builder is scaled
 -- by this factor, so feet stay planted exactly on the belt or pad.
-local MODEL_SCALE = 1.7
+-- BuildBrainrotModel can pass a smaller scale for base creatures;
+-- model building is single-threaded, so one active scale is safe.
+local MODEL_SCALE = 2.1
+local activeScale = MODEL_SCALE
 
 local function makeModelPart(model, baseCFrame, name, size, offset, color, material, shape)
 	local part = Instance.new("Part")
 	part.Name = name
-	part.Size = size * MODEL_SCALE
-	part.CFrame = baseCFrame * CFrame.new(offset * MODEL_SCALE)
+	part.Size = size * activeScale
+	part.CFrame = baseCFrame * CFrame.new(offset * activeScale)
 	part.Color = color
 	part.Material = material or Enum.Material.SmoothPlastic
 	part.Shape = shape or Enum.PartType.Block
@@ -103,7 +106,9 @@ end
 -- Builds a blocky creature model for one character. The model faces +X,
 -- stands on the ground at the given position, and carries a floating
 -- label with its name, rarity and income. showCost adds a cost line.
-function BrainrotSpawner.BuildBrainrotModel(character, mutationName, position, yaw, showCost)
+-- scaleOverride shrinks or grows this one model (bases use 1.9).
+function BrainrotSpawner.BuildBrainrotModel(character, mutationName, position, yaw, showCost, scaleOverride)
+	activeScale = scaleOverride or MODEL_SCALE
 	local model = Instance.new("Model")
 	model.Name = character.Name
 	local baseCFrame = CFrame.new(position) * CFrame.Angles(0, yaw or 0, 0)
@@ -156,7 +161,7 @@ function BrainrotSpawner.BuildBrainrotModel(character, mutationName, position, y
 	gui.Name = "BrainrotLabel"
 	gui.Adornee = body
 	gui.Size = UDim2.fromOffset(280, 110)
-	gui.StudsOffsetWorldSpace = Vector3.new(0, 3.2 * MODEL_SCALE, 0)
+	gui.StudsOffsetWorldSpace = Vector3.new(0, 3.2 * activeScale, 0)
 	gui.AlwaysOnTop = false
 	gui.MaxDistance = 150
 	gui.LightInfluence = 0

@@ -1,8 +1,12 @@
 -- StealManager.luau (server module)
--- Owns stealing: a player can pick up a brainrot from another player's
--- base and carry it home, but only while that base is unlocked. The brainrot
--- rides above the thief's head until they reach their own base (the steal
--- completes) or the owner touches them (the brainrot drops and returns).
+-- Owns carrying, for steals and for purchases alike: a player can pick
+-- up a brainrot from another player's base and carry it home, but only
+-- while that base is unlocked; and a brainrot bought off the belt is
+-- likewise carried home by its buyer before it takes its base slot.
+-- A carried brainrot rides above the carrier's head until they reach
+-- their own base. A stolen one also drops and returns home when its
+-- owner touches the thief; a bought one is safe, but auto-places if
+-- the buyer dies on the way.
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -16,7 +20,12 @@ local PlayerData = require(script.Parent:WaitForChild("PlayerData"))
 local StealManager = {}
 
 local remotes = nil
-local carried = {} -- [thief Player] -> { Victim, Slot, Character, Mutation, Model, TouchConnection }
+local carried = {} -- [carrier Player] -> { Kind, Victim, Slot, Character, Mutation, Model, TouchConnection }
+
+-- How high above the carrier's root a carried brainrot rides. The
+-- creatures are built huge, so this keeps their feet clear of the
+-- carrier's head.
+local CARRY_HEIGHT = 6.5
 
 local function sendFeedback(player, message)
 	if remotes then
@@ -93,8 +102,37 @@ local function completeSteal(thief)
 	end
 end
 
--- Watches the thief: carrying the brainrot above their head, completing
--- the steal when they step onto their own base.
+-- The purchase carry completes: the brainrot takes the base slot its
+-- purchase already reserved in the buyer's save.
+local function completePurchaseCarry(thief)
+	local carry = carried[thief]
+	if not carry then
+		return
+	end
+	carried[thief] = nil
+	if carry.Model then
+		carry.Model:Destroy()
+	end
+	BaseManager.PlaceBrainrotOnBase(thief, carry.Character, carry.Mutation, carry.Slot)
+	sendFeedback(thief, BrainrotCatalog.GetDisplayName(carry.Character, carry.Mutation) .. " is on your base, earning for you!")
+end
+
+-- Ends a carry whose carrier can no longer carry: a stolen brainrot
+-- goes home to its owner; a bought one simply takes its base slot.
+local function endCarryInterrupted(thief)
+	local carry = carried[thief]
+	if not carry then
+		return
+	end
+	if carry.Kind == "Purchase" then
+		completePurchaseCarry(thief)
+	else
+		returnStolenBrainrotToOwner(thief)
+	end
+end
+
+-- Watches the carrier: carrying the brainrot above their head,
+-- completing the carry when they step onto their own base.
 local function watchCarriedBrainrot(thief)
 	local carry = carried[thief]
 	if not carry then
@@ -102,20 +140,24 @@ local function watchCarriedBrainrot(thief)
 	end
 	local character = thief.Character
 	if not character then
-		returnStolenBrainrotToOwner(thief)
+		endCarryInterrupted(thief)
 		return
 	end
 	local root = character:FindFirstChild("HumanoidRootPart")
 	local humanoid = character:FindFirstChildOfClass("Humanoid")
 	if not root or not humanoid or humanoid.Health <= 0 then
-		returnStolenBrainrotToOwner(thief)
+		endCarryInterrupted(thief)
 		return
 	end
 	if carry.Model and carry.Model.PrimaryPart then
-		carry.Model:PivotTo(root.CFrame * CFrame.new(0, 4.5, 0))
+		carry.Model:PivotTo(root.CFrame * CFrame.new(0, CARRY_HEIGHT, 0))
 	end
 	if BaseManager.IsPositionInsideOwnBase(thief, root.Position) then
-		completeSteal(thief)
+		if carry.Kind == "Purchase" then
+			completePurchaseCarry(thief)
+		else
+			completeSteal(thief)
+		end
 	end
 end
 
@@ -164,10 +206,11 @@ function StealManager.TryStealBrainrot(thief, victim, slotIndex)
 	PlayerData.RemoveOwnedBrainrot(victim, slotIndex)
 	BaseManager.RemoveBrainrotFromBase(victim, slotIndex)
 
-	local model = BrainrotSpawner.BuildBrainrotModel(character, entry.Mutation, root.Position + Vector3.new(0, 4.5, 0), 0, false)
+	local model = BrainrotSpawner.BuildBrainrotModel(character, entry.Mutation, root.Position + Vector3.new(0, CARRY_HEIGHT, 0), 0, false)
 	model:SetAttribute("StolenFromUserId", victim.UserId)
 
 	local carry = {
+		Kind = "Steal",
 		Victim = victim,
 		Slot = slotIndex,
 		Character = character,
@@ -205,6 +248,83 @@ function StealManager.TryStealBrainrot(thief, victim, slotIndex)
 	return true, "Stolen!"
 end
 
+-- Starts a purchase carry: the brainrot the player just bought rides
+-- above their head until they carry it onto their own base, where it
+-- takes the slot the purchase already reserved. Returns false when
+-- the player has no live character to carry it, so the caller can
+-- place the brainrot directly instead.
+function StealManager.StartPurchaseCarry(player, character, mutationName, slotIndex)
+	if carried[player] then
+		return false
+	end
+	local buyerCharacter = player.Character
+	if not buyerCharacter then
+		return false
+	end
+	local root = buyerCharacter:FindFirstChild("HumanoidRootPart")
+	if not root then
+		return false
+	end
+	local model = BrainrotSpawner.BuildBrainrotModel(character, mutationName, root.Position + Vector3.new(0, CARRY_HEIGHT, 0), 0, false)
+	carried[player] = {
+		Kind = "Purchase",
+		Victim = nil,
+		Slot = slotIndex,
+		Character = character,
+		Mutation = mutationName,
+		Model = model,
+		TouchConnection = nil,
+	}
+	-- Dying on the way home does not lose a paid-for brainrot: it
+	-- takes its base slot anyway.
+	local humanoid = buyerCharacter:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		humanoid.Died:Connect(function()
+			if carried[player] and carried[player].Kind == "Purchase" then
+				completePurchaseCarry(player)
+			end
+		end)
+	end
+	return true
+end
+
+-- What this player is carrying, for the client's task bar, or nil.
+function StealManager.GetCarrySummary(player)
+	local carry = carried[player]
+	if not carry then
+		return nil
+	end
+	return {
+		Kind = carry.Kind,
+		Name = BrainrotCatalog.GetDisplayName(carry.Character, carry.Mutation),
+	}
+end
+
+-- The reserved base slot of a purchase carry, or nil.
+function StealManager.GetCarriedPurchaseSlot(player)
+	local carry = carried[player]
+	if carry and carry.Kind == "Purchase" then
+		return carry.Slot
+	end
+	return nil
+end
+
+-- Cancels a purchase carry without placing anything (used when the
+-- carried purchase is sold from the base panel mid-carry, and when
+-- the buyer leaves: the purchase stays in their save and its base
+-- model is rebuilt when they rejoin). Steal carries are never
+-- cancelled this way; a stolen brainrot must go home to its owner.
+function StealManager.CancelCarry(player)
+	local carry = carried[player]
+	if not carry or carry.Kind ~= "Purchase" then
+		return
+	end
+	carried[player] = nil
+	if carry.Model then
+		carry.Model:Destroy()
+	end
+end
+
 -- Called when a base brainrot is clicked: the clicker is the thief.
 function StealManager.TryStealFromClick(clickingPlayer, ownerPlayer, slotIndex)
 	local ok, message = StealManager.TryStealBrainrot(clickingPlayer, ownerPlayer, slotIndex)
@@ -238,7 +358,13 @@ function StealManager.Init(remoteFolder)
 
 	Players.PlayerRemoving:Connect(function(player)
 		if carried[player] then
-			returnStolenBrainrotToOwner(player)
+			if carried[player].Kind == "Purchase" then
+				-- The purchase is already in their save; its base
+				-- model is rebuilt when they rejoin.
+				StealManager.CancelCarry(player)
+			else
+				returnStolenBrainrotToOwner(player)
+			end
 		end
 		-- A victim leaving while their brainrot is carried keeps it safe:
 		-- it returns to them the next time they join from their save.

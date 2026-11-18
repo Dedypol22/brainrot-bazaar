@@ -13,6 +13,7 @@ local BaseManager = require(script.Parent:WaitForChild("BaseManager"))
 local BrainrotSpawner = require(script.Parent:WaitForChild("BrainrotSpawner"))
 local PlayerData = require(script.Parent:WaitForChild("PlayerData"))
 local RebirthManager = require(script.Parent:WaitForChild("RebirthManager"))
+local StealManager = require(script.Parent:WaitForChild("StealManager"))
 
 local EconomyManager = {}
 
@@ -75,6 +76,7 @@ function EconomyManager.BuildStateSnapshot(player)
 		NextSlotCost = nextSlotCost,
 		Owned = owned,
 		Belt = BrainrotSpawner.GetBeltBrainrotsForClient(),
+		Carrying = StealManager.GetCarrySummary(player),
 		Lock = BaseManager.GetLockStatus(player),
 		RebirthThreshold = BrainrotCatalog.RebirthCashThreshold,
 		RebirthMultiplier = RebirthManager.GetIncomeMultiplier(player),
@@ -121,6 +123,9 @@ function EconomyManager.TryBuyBeltBrainrot(player, beltId)
 	if not entry then
 		return false, "That brainrot already left the belt!"
 	end
+	if StealManager.IsCarrying(player) then
+		return false, "You are already carrying a brainrot — take it home to your base first!"
+	end
 	local data = PlayerData.Get(player)
 	if data.Cash < entry.Cost then
 		return false, "You need $" .. entry.Cost .. " for " .. BrainrotCatalog.GetDisplayName(entry.Character, entry.Mutation) .. "!"
@@ -136,10 +141,17 @@ function EconomyManager.TryBuyBeltBrainrot(player, beltId)
 	data.Cash = data.Cash - entry.Cost
 	PlayerData.AddOwnedBrainrot(player, entry.Character.Id, entry.Mutation, slot)
 	BrainrotSpawner.RemoveBeltBrainrot(beltId)
-	BaseManager.PlaceBrainrotOnBase(player, entry.Character, entry.Mutation, slot)
+	-- The purchase is the player's from this moment (it is in their
+	-- save and already earns), but the creature itself rides home on
+	-- the buyer's head and only takes its base slot when they carry
+	-- it onto their own plot. If they cannot carry right now, it
+	-- goes straight onto the base instead.
+	if not StealManager.StartPurchaseCarry(player, entry.Character, entry.Mutation, slot) then
+		BaseManager.PlaceBrainrotOnBase(player, entry.Character, entry.Mutation, slot)
+	end
 	PlayerData.Sync(player)
 	EconomyManager.SendStateUpdate(player)
-	return true, "You bought " .. BrainrotCatalog.GetDisplayName(entry.Character, entry.Mutation) .. " for $" .. entry.Cost .. "!"
+	return true, "You bought " .. BrainrotCatalog.GetDisplayName(entry.Character, entry.Mutation) .. " for $" .. entry.Cost .. "! Carry it home to your base!"
 end
 
 -- Sells the brainrot on one slot back for half its cost.
@@ -162,6 +174,11 @@ function EconomyManager.TrySellBrainrot(player, slotIndex)
 	local refund = math.floor(character.Cost * BrainrotCatalog.SellRefundFraction)
 	local data = PlayerData.Get(player)
 	data.Cash = data.Cash + refund
+	-- If this brainrot is still being carried home, the carry ends
+	-- here: there is nothing left to place.
+	if StealManager.GetCarriedPurchaseSlot(player) == slotIndex then
+		StealManager.CancelCarry(player)
+	end
 	PlayerData.RemoveOwnedBrainrot(player, slotIndex)
 	BaseManager.RemoveBrainrotFromBase(player, slotIndex)
 	PlayerData.Sync(player)
@@ -236,6 +253,10 @@ function EconomyManager.Init(remoteFolder)
 	end)
 
 	remotes.RequestRebirth.OnServerEvent:Connect(function(player)
+		if StealManager.IsCarrying(player) then
+			sendFeedback(player, "Take the brainrot you are carrying home before you rebirth!")
+			return
+		end
 		local ok, message = RebirthManager.TryRebirth(player)
 		sendFeedback(player, message)
 		if ok then

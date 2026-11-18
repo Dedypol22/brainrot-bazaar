@@ -115,6 +115,12 @@ local waveBanner = makeFrame(gui, "WaveBanner", UDim2.new(0, 500, 0, 48), UDim2.
 waveBanner.Visible = false
 local waveLabel = makeLabel(waveBanner, "WaveLabel", UDim2.new(1, -16, 1, -8), UDim2.new(0, 8, 0, 4), "", 24, Color3.fromRGB(255, 255, 255), 1)
 
+-- Task bar under the banner: always shows the player's next goal, the
+-- way the genre's hit games coach a new player from buy to base to
+-- rebirth without ever leaving them wondering what to do.
+local taskBar = makeFrame(gui, "TaskBar", UDim2.new(0, 560, 0, 40), UDim2.new(0.5, 0, 0, 152), Vector2.new(0.5, 0), Color3.fromRGB(25, 25, 40), 0.15)
+local taskLabel = makeLabel(taskBar, "TaskLabel", UDim2.new(1, -16, 1, -6), UDim2.new(0, 8, 0, 3), "TASK: Buy a Brainrot from the conveyor belt!", 19, Color3.fromRGB(255, 220, 80), 1)
+
 -- Feedback messages in the middle of the screen.
 local messageLabel = makeLabel(gui, "MessageLabel", UDim2.new(0, 600, 0, 44), UDim2.new(0.5, 0, 0.42, 0), "", 26, Color3.fromRGB(255, 255, 255), 0.3)
 messageLabel.AnchorPoint = Vector2.new(0.5, 0)
@@ -176,7 +182,7 @@ local hintLabel = makeLabel(
 	"HintLabel",
 	UDim2.new(0, 250, 0, 110),
 	UDim2.new(0, 10, 0.5, 0),
-	"HOW TO PLAY\nBuy brainrots from the belt.\nClick a rival's brainrot to steal it!\nLock your base to stop thieves.\nRun home when the wave comes!",
+	"HOW TO PLAY\nBuy brainrots from the belt and\ncarry them home to your base.\nClick a rival's brainrot to steal it!\nLock your base to stop thieves.\nRun home when the wave comes!",
 	15,
 	Color3.fromRGB(230, 230, 230),
 	0.4
@@ -242,7 +248,40 @@ local function renderBaseList(owned)
 	end
 end
 
+-- The next goal for the task bar, derived from the same snapshot the
+-- rest of the HUD renders. Carrying always wins: a brainrot on your
+-- head is the only job that matters until it is home.
+local function computeTaskText(state)
+	if state.Carrying then
+		if state.Carrying.Kind == "Steal" then
+			return "TASK: RUN! Take the stolen " .. state.Carrying.Name .. " to YOUR base!"
+		end
+		return "TASK: Carry " .. state.Carrying.Name .. " home to your base!"
+	end
+	local ownedCount = #state.Owned
+	if ownedCount == 0 then
+		return "TASK: Buy your first Brainrot from the conveyor belt!"
+	end
+	if ownedCount < state.Slots then
+		if state.Cash >= 150 then
+			return "TASK: Buy more Brainrots — fill your base (" .. ownedCount .. "/" .. state.Slots .. ")!"
+		end
+		return "TASK: Your Brainrots are earning — buy another at $150!"
+	end
+	if state.NextSlotCost then
+		if state.Cash >= state.NextSlotCost then
+			return "TASK: Your base is full — buy another slot!"
+		end
+		return "TASK: Save up for another base slot — $" .. formatMoney(state.NextSlotCost) .. "!"
+	end
+	if state.TotalEarned >= state.RebirthThreshold then
+		return "TASK: REBIRTH for +25% income forever!"
+	end
+	return "TASK: Lock your base, steal from rivals, grow rich!"
+end
+
 local function onStateUpdate(state)
+	taskLabel.Text = computeTaskText(state)
 	cashLabel.Text = "$" .. formatMoney(state.Cash)
 	local bonusPercent = math.floor((state.RebirthMultiplier - 1) * 100 + 0.5)
 	incomeLabel.Text = "+$" .. formatMoney(state.IncomePerSecond) .. "/s    Rebirths: " .. state.Rebirths .. " (+" .. bonusPercent .. "%)"

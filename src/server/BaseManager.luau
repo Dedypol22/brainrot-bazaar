@@ -32,8 +32,11 @@ local function updateSignForPlot(plot, incomePerSecond)
 	end
 	if plot.Owner then
 		label.Text = plot.Owner.DisplayName .. "'s Bazaar\n$" .. math.floor(incomePerSecond) .. "/s"
+		plot.SignLabel.Enabled = true
 	else
-		label.Text = "Empty Plot\nClaim it by joining!"
+		-- An unclaimed plot shows no floating text at all: a row of
+		-- "Empty Plot" billboards was the ugliest thing on the map.
+		plot.SignLabel.Enabled = false
 	end
 end
 
@@ -79,11 +82,11 @@ function BaseManager.ReleasePlotForPlayer(player)
 	end
 end
 
--- Is a world position inside this player's own plot square? The plot
--- pad is rotated by the plot angle, so rotate the offset back into the
--- plot's local frame first; an axis-aligned check in world space would
--- wrongly judge the corners of the diagonal plots (45, 135, ...) and
--- wrongly accept ground just outside them.
+-- Is a world position inside this player's own plot rectangle? The
+-- plot pad is rotated by the plot angle, so rotate the offset back
+-- into the plot's local frame first; an axis-aligned check in world
+-- space would wrongly judge the corners and wrongly accept ground
+-- just outside them. The pad is 24 deep (local X) by 16 wide.
 function BaseManager.IsPositionInsideOwnBase(player, position)
 	local plot = plotByPlayer[player]
 	if not plot then
@@ -95,7 +98,7 @@ function BaseManager.IsPositionInsideOwnBase(player, position)
 	local sinA = math.sin(angle)
 	local localX = offset.X * cosA + offset.Z * sinA
 	local localZ = -offset.X * sinA + offset.Z * cosA
-	return math.abs(localX) <= 9 and math.abs(localZ) <= 9
+	return math.abs(localX) <= 12 and math.abs(localZ) <= 8
 end
 
 -- Puts a brainrot model on one slot of a player's base, facing the plaza.
@@ -111,8 +114,10 @@ function BaseManager.PlaceBrainrotOnBase(player, character, mutationName, slotIn
 	BaseManager.RemoveBrainrotFromBase(player, slotIndex)
 
 	-- Face the plaza: the model's front (+X) points at the plaza centre.
+	-- Base creatures stand a touch smaller than belt creatures so a
+	-- full base of ten does not crowd itself off the pad.
 	local yaw = -plot.Angle + math.pi
-	local model = BrainrotSpawner.BuildBrainrotModel(character, mutationName, slotPosition, yaw, false)
+	local model = BrainrotSpawner.BuildBrainrotModel(character, mutationName, slotPosition, yaw, false, 1.9)
 	model:SetAttribute("OwnerUserId", player.UserId)
 	model:SetAttribute("SlotIndex", slotIndex)
 

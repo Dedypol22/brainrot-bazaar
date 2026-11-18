@@ -1,9 +1,10 @@
 -- MapBuilder.luau (server module)
 -- Builds the whole 3D world of Brainrot Bazaar from Parts: the circular
 -- market plaza, the conveyor belt through its middle, eight player base
--- plots in a ring, the spawn area, palm trees, market stalls, clouds and
--- the tsunami wave wall. No prebuilt place parts are used besides the
--- baseplate the Rojo project file provides.
+-- plots in two rows flanking the belt, a full-colour ground cover, a
+-- panel fence around the whole bazaar, the spawn area, palm trees,
+-- market stalls, clouds and the tsunami wave wall. No prebuilt place
+-- parts are used besides the baseplate the Rojo project file provides.
 
 local Workspace = game:GetService("Workspace")
 local Lighting = game:GetService("Lighting")
@@ -13,18 +14,19 @@ local BrainrotCatalog = require(ReplicatedStorage:WaitForChild("BrainrotCatalog"
 
 local MapBuilder = {}
 
--- Slot offsets on a plot pad (two rows of five, local x/z studs).
+-- Slot offsets on a plot pad (two rows of five, local x/z studs),
+-- spread wide because the creatures themselves are built big.
 local SLOT_OFFSETS = {
-	Vector2.new(-7, -4),
-	Vector2.new(-3.5, -4),
-	Vector2.new(0, -4),
-	Vector2.new(3.5, -4),
-	Vector2.new(7, -4),
-	Vector2.new(-7, 4),
-	Vector2.new(-3.5, 4),
-	Vector2.new(0, 4),
-	Vector2.new(3.5, 4),
-	Vector2.new(7, 4),
+	Vector2.new(-8, -4.5),
+	Vector2.new(-4, -4.5),
+	Vector2.new(0, -4.5),
+	Vector2.new(4, -4.5),
+	Vector2.new(8, -4.5),
+	Vector2.new(-8, 4.5),
+	Vector2.new(-4, 4.5),
+	Vector2.new(0, 4.5),
+	Vector2.new(4, 4.5),
+	Vector2.new(8, 4.5),
 }
 
 local function makePart(name, size, position, color, material)
@@ -101,10 +103,11 @@ local function buildPlaza()
 end
 
 local function buildConveyor()
-	-- The belt runs along the X axis through the plaza, z = 0.
+	-- The belt runs along the X axis through the plaza, z = 0. It is
+	-- wide on purpose: the creatures riding it are built huge.
 	local belt = makePart(
 		"ConveyorBelt",
-		Vector3.new(62, 1, 10),
+		Vector3.new(76, 1, 14),
 		Vector3.new(0, 1, 0),
 		Color3.fromRGB(70, 70, 80),
 		Enum.Material.Metal
@@ -112,10 +115,10 @@ local function buildConveyor()
 	belt.CanCollide = true
 
 	-- Yellow guide stripes down the middle of the belt.
-	for x = -28, 28, 4 do
+	for x = -34, 34, 4 do
 		local stripe = makePart(
 			"BeltStripe",
-			Vector3.new(1.5, 0.1, 6),
+			Vector3.new(1.5, 0.1, 10),
 			Vector3.new(x, 1.55, 0),
 			Color3.fromRGB(255, 210, 40),
 			Enum.Material.Neon
@@ -124,16 +127,84 @@ local function buildConveyor()
 	end
 
 	-- Side rails so the belt reads as a track.
-	makePart("BeltRailNorth", Vector3.new(62, 1.2, 0.6), Vector3.new(0, 1.6, 5.2), Color3.fromRGB(200, 200, 210), Enum.Material.Metal)
-	makePart("BeltRailSouth", Vector3.new(62, 1.2, 0.6), Vector3.new(0, 1.6, -5.2), Color3.fromRGB(200, 200, 210), Enum.Material.Metal)
+	makePart("BeltRailNorth", Vector3.new(76, 1.2, 0.6), Vector3.new(0, 1.6, 7.4), Color3.fromRGB(200, 200, 210), Enum.Material.Metal)
+	makePart("BeltRailSouth", Vector3.new(76, 1.2, 0.6), Vector3.new(0, 1.6, -7.4), Color3.fromRGB(200, 200, 210), Enum.Material.Metal)
 
 	-- Entry and exit arches the brainrots ride through.
-	for _, archX in ipairs({ -31, 31 }) do
-		makePart("BeltArchLeft", Vector3.new(0.8, 7, 0.8), Vector3.new(archX, 4, 5), Color3.fromRGB(255, 120, 60), Enum.Material.SmoothPlastic)
-		makePart("BeltArchRight", Vector3.new(0.8, 7, 0.8), Vector3.new(archX, 4, -5), Color3.fromRGB(255, 120, 60), Enum.Material.SmoothPlastic)
-		local beam = makePart("BeltArchBeam", Vector3.new(0.8, 0.8, 11), Vector3.new(archX, 7.4, 0), Color3.fromRGB(255, 120, 60), Enum.Material.SmoothPlastic)
+	for _, archX in ipairs({ -38, 38 }) do
+		makePart("BeltArchLeft", Vector3.new(0.8, 9, 0.8), Vector3.new(archX, 5, 7), Color3.fromRGB(255, 120, 60), Enum.Material.SmoothPlastic)
+		makePart("BeltArchRight", Vector3.new(0.8, 9, 0.8), Vector3.new(archX, 5, -7), Color3.fromRGB(255, 120, 60), Enum.Material.SmoothPlastic)
+		local beam = makePart("BeltArchBeam", Vector3.new(0.8, 0.8, 15), Vector3.new(archX, 9.4, 0), Color3.fromRGB(255, 120, 60), Enum.Material.SmoothPlastic)
 		beam.CanCollide = false
 	end
+end
+
+local function buildGroundCover()
+	-- One bright grass sheet under the whole bazaar, so no grey
+	-- baseplate ever shows between the plaza, the belt and the plots.
+	local ground = makePart(
+		"GroundCover",
+		Vector3.new(250, 1, 190),
+		Vector3.new(0, -0.26, 0),
+		Color3.fromRGB(95, 195, 85),
+		Enum.Material.Grass
+	)
+	ground.CanCollide = true
+end
+
+local function buildPerimeterFence()
+	-- A colourful panel fence around the whole play rectangle, so the
+	-- bazaar reads as one enclosed arena in every screenshot.
+	local halfX = 96
+	local halfZ = 72
+	local panelColors = {
+		Color3.fromRGB(255, 90, 90),
+		Color3.fromRGB(255, 200, 60),
+		Color3.fromRGB(90, 210, 110),
+		Color3.fromRGB(80, 160, 255),
+		Color3.fromRGB(255, 130, 200),
+		Color3.fromRGB(255, 150, 60),
+	}
+	local colorIndex = 0
+	local function nextColor()
+		colorIndex = colorIndex + 1
+		return panelColors[((colorIndex - 1) % #panelColors) + 1]
+	end
+	local function buildFenceRun(fromPosition, toPosition)
+		local delta = toPosition - fromPosition
+		local length = delta.Magnitude
+		local yaw = math.atan2(-delta.Z, delta.X)
+		local panelCount = math.floor(length / 12)
+		for panelIndex = 1, panelCount do
+			local centre = fromPosition + delta * ((panelIndex - 0.5) / panelCount)
+			local panel = makePart(
+				"FencePanel",
+				Vector3.new(length / panelCount - 0.3, 4, 0.6),
+				Vector3.new(centre.X, 2.3, centre.Z),
+				nextColor(),
+				Enum.Material.SmoothPlastic
+			)
+			panel.CFrame = CFrame.new(centre.X, 2.3, centre.Z) * CFrame.Angles(0, yaw, 0)
+		end
+		local postCount = panelCount + 1
+		for postIndex = 0, postCount - 1 do
+			local postPosition = fromPosition + delta * (postIndex / panelCount)
+			makePart("FencePost", Vector3.new(0.7, 5.2, 0.7), Vector3.new(postPosition.X, 2.6, postPosition.Z), Color3.fromRGB(120, 70, 30), Enum.Material.Wood)
+		end
+		local middle = (fromPosition + toPosition) / 2
+		local rail = makePart(
+			"FenceRail",
+			Vector3.new(length, 0.5, 0.9),
+			Vector3.new(middle.X, 4.7, middle.Z),
+			Color3.fromRGB(255, 220, 80),
+			Enum.Material.Wood
+		)
+		rail.CFrame = CFrame.new(middle.X, 4.7, middle.Z) * CFrame.Angles(0, yaw, 0)
+	end
+	buildFenceRun(Vector3.new(-halfX, 0, -halfZ), Vector3.new(halfX, 0, -halfZ))
+	buildFenceRun(Vector3.new(halfX, 0, -halfZ), Vector3.new(halfX, 0, halfZ))
+	buildFenceRun(Vector3.new(halfX, 0, halfZ), Vector3.new(-halfX, 0, halfZ))
+	buildFenceRun(Vector3.new(-halfX, 0, halfZ), Vector3.new(-halfX, 0, -halfZ))
 end
 
 local function buildSlotPad(plot, slotIndex)
@@ -163,13 +234,7 @@ local function buildSlotPad(plot, slotIndex)
 	return pad
 end
 
-local function buildBasePlot(plotIndex, angle)
-	local center = Vector3.new(
-		BrainrotCatalog.PlotRingRadius * math.cos(angle),
-		0,
-		BrainrotCatalog.PlotRingRadius * math.sin(angle)
-	)
-
+local function buildBasePlot(plotIndex, center, angle)
 	local plot = {
 		Index = plotIndex,
 		Angle = angle,
@@ -182,10 +247,13 @@ local function buildBasePlot(plotIndex, angle)
 		CooldownUntil = 0,
 	}
 
-	-- Plot pad: an 18x18 coloured square, top at y = 1.
+	-- Plot pad: a coloured rectangle, top at y = 1, 24 studs deep
+	-- (local X runs from the belt outward) by 16 studs wide along
+	-- the belt, so a base reads as two columns of creatures lined
+	-- up facing the conveyor.
 	local pad = makePart(
 		"BasePlot" .. plotIndex,
-		Vector3.new(18, 1, 18),
+		Vector3.new(24, 1, 16),
 		Vector3.new(center.X, 0.5, center.Z),
 		BrainrotCatalog.PlotColors[plotIndex],
 		Enum.Material.Grass
@@ -209,7 +277,7 @@ local function buildBasePlot(plotIndex, angle)
 
 	-- Owner sign on the plaza-facing edge of the plot.
 	local towardPlaza = -Vector3.new(math.cos(angle), 0, math.sin(angle))
-	local signPosition = center + towardPlaza * 10.5
+	local signPosition = center + towardPlaza * 14.5
 	makePart("PlotSignPole" .. plotIndex, Vector3.new(0.5, 4, 0.5), signPosition + Vector3.new(0, 2, 0), Color3.fromRGB(120, 70, 30), Enum.Material.Wood)
 	local board = makePart(
 		"PlotSignBoard" .. plotIndex,
@@ -219,7 +287,8 @@ local function buildBasePlot(plotIndex, angle)
 		Enum.Material.Wood
 	)
 	board.CFrame = CFrame.new(signPosition + Vector3.new(0, 5.5, 0)) * CFrame.Angles(0, -angle + math.rad(90), 0)
-	local signGui = makeBillboardLabel(board, Vector2.new(240, 100), "Empty Plot\nClaim it by joining!", 22, Color3.fromRGB(60, 40, 20), Color3.fromRGB(250, 240, 210))
+	local signGui = makeBillboardLabel(board, Vector2.new(240, 100), "", 22, Color3.fromRGB(60, 40, 20), Color3.fromRGB(250, 240, 210))
+	signGui.Enabled = false
 	plot.SignLabel = signGui
 
 	return plot
@@ -300,10 +369,7 @@ local function buildPalmTree(position)
 	end
 end
 
-local function buildMarketStall(angle)
-	local radius = 40
-	local center = Vector3.new(radius * math.cos(angle), 0, radius * math.sin(angle))
-	local yaw = -angle + math.rad(90)
+local function buildMarketStall(center, yaw)
 
 	local counter = makePart("StallCounter", Vector3.new(7, 2.5, 3), center + Vector3.new(0, 1.75, 0), Color3.fromRGB(200, 140, 80), Enum.Material.Wood)
 	counter.CFrame = CFrame.new(center + Vector3.new(0, 1.75, 0)) * CFrame.Angles(0, yaw, 0)
@@ -411,28 +477,55 @@ end
 -- server modules need (plots, spawn, belt, wave wall).
 function MapBuilder.BuildWorld()
 	paintLighting()
+	buildGroundCover()
 	buildPlaza()
 	buildConveyor()
 	local spawnPosition = buildSpawnArea()
 
+	-- Eight plots in two rows flanking the belt: plots 1-4 on the
+	-- north side (facing +Z toward the belt), plots 5-8 on the south
+	-- side (facing -Z). The plot angle points from the plaza toward
+	-- the plot, the same convention the ring layout used.
 	local plots = {}
 	for plotIndex = 1, BrainrotCatalog.PlotCount do
-		local angle = (plotIndex - 1) * (math.pi * 2 / BrainrotCatalog.PlotCount)
-		plots[plotIndex] = buildBasePlot(plotIndex, angle)
+		local column = ((plotIndex - 1) % 4) + 1
+		local rowX = BrainrotCatalog.PlotRowX[column]
+		local center
+		local angle
+		if plotIndex <= 4 then
+			center = Vector3.new(rowX, 0, -BrainrotCatalog.PlotRowZ)
+			angle = -math.pi / 2
+		else
+			center = Vector3.new(rowX, 0, BrainrotCatalog.PlotRowZ)
+			angle = math.pi / 2
+		end
+		plots[plotIndex] = buildBasePlot(plotIndex, center, angle)
 	end
 
-	-- Palm trees between the plots, just outside the plaza.
-	for treeIndex = 0, 5 do
-		local angle = math.rad(30 + treeIndex * 60)
-		local position = Vector3.new(52 * math.cos(angle), 0, 52 * math.sin(angle))
+	-- Palm trees along the fence line and at both ends of the belt.
+	for _, position in ipairs({
+		Vector3.new(-84, 0, -58),
+		Vector3.new(84, 0, -58),
+		Vector3.new(-84, 0, 58),
+		Vector3.new(84, 0, 58),
+		Vector3.new(-88, 0, 0),
+		Vector3.new(88, 0, 0),
+	}) do
 		buildPalmTree(position)
 	end
 
-	-- Four market stalls on the plaza edge, between the plots.
-	for _, stallAngle in ipairs({ math.rad(45), math.rad(135), math.rad(225), math.rad(315) }) do
-		buildMarketStall(stallAngle)
+	-- Four market stalls in the walkways between the belt and the
+	-- plot rows, facing the plaza centre.
+	for _, stall in ipairs({
+		{ Vector3.new(14, 0, 17), math.rad(160) },
+		{ Vector3.new(-14, 0, 17), math.rad(20) },
+		{ Vector3.new(14, 0, -17), math.rad(-160) },
+		{ Vector3.new(-14, 0, -17), math.rad(-20) },
+	}) do
+		buildMarketStall(stall[1], stall[2])
 	end
 
+	buildPerimeterFence()
 	buildClouds()
 	local wave = buildWaveWall()
 
