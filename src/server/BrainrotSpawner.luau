@@ -273,8 +273,12 @@ local function moveBeltBrainrotsAlongBelt(deltaTime)
 				entry.Model:Destroy()
 			end
 		elseif entry.Model then
-			-- Belt brainrots always face +X, the direction they ride.
-			entry.Model:PivotTo(CFrame.new(entry.PositionX, BrainrotCatalog.BeltTopY, 0))
+			-- Shift the model sideways by this tick's step only, keeping
+			-- the height it was built at. An absolute PivotTo down to the
+			-- belt's top Y would sink the model into the belt, because
+			-- the model pivot sits at its body centre, not at its feet.
+			local pivot = entry.Model:GetPivot()
+			entry.Model:PivotTo(pivot + Vector3.new(step, 0, 0))
 		end
 	end
 end
