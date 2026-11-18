@@ -156,6 +156,9 @@ function StealManager.TryStealBrainrot(thief, victim, slotIndex)
 	if PlayerData.FindFreeSlot(thief) == nil then
 		return false, "Your base is full! Buy another slot first."
 	end
+	if not BaseManager.GetPlotForPlayer(thief) then
+		return false, "You have no base yet — wait for a free plot!"
+	end
 
 	-- Lift it off the victim's base.
 	PlayerData.RemoveOwnedBrainrot(victim, slotIndex)

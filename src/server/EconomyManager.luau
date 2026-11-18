@@ -125,6 +125,9 @@ function EconomyManager.TryBuyBeltBrainrot(player, beltId)
 	if data.Cash < entry.Cost then
 		return false, "You need $" .. entry.Cost .. " for " .. BrainrotCatalog.GetDisplayName(entry.Character, entry.Mutation) .. "!"
 	end
+	if not BaseManager.GetPlotForPlayer(player) then
+		return false, "No free base plot right now — wait for a player to leave!"
+	end
 	local slot = PlayerData.FindFreeSlot(player)
 	if not slot then
 		return false, "Your base is full! Buy another slot first."
@@ -173,6 +176,9 @@ function EconomyManager.TryBuyExtraSlot(player)
 	end
 	local data = PlayerData.Get(player)
 	local totalSlots = PlayerData.GetTotalSlots(player)
+	if not BaseManager.GetPlotForPlayer(player) then
+		return false, "You have no base yet — wait for a free plot!"
+	end
 	if totalSlots >= BrainrotCatalog.MaxSlotCount then
 		return false, "Your base already has the maximum " .. BrainrotCatalog.MaxSlotCount .. " slots."
 	end

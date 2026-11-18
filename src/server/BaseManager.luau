@@ -79,14 +79,23 @@ function BaseManager.ReleasePlotForPlayer(player)
 	end
 end
 
--- Is a world position inside this player's own plot square?
+-- Is a world position inside this player's own plot square? The plot
+-- pad is rotated by the plot angle, so rotate the offset back into the
+-- plot's local frame first; an axis-aligned check in world space would
+-- wrongly judge the corners of the diagonal plots (45, 135, ...) and
+-- wrongly accept ground just outside them.
 function BaseManager.IsPositionInsideOwnBase(player, position)
 	local plot = plotByPlayer[player]
 	if not plot then
 		return false
 	end
 	local offset = position - plot.Center
-	return math.abs(offset.X) <= 9 and math.abs(offset.Z) <= 9
+	local angle = plot.Angle
+	local cosA = math.cos(angle)
+	local sinA = math.sin(angle)
+	local localX = offset.X * cosA + offset.Z * sinA
+	local localZ = -offset.X * sinA + offset.Z * cosA
+	return math.abs(localX) <= 9 and math.abs(localZ) <= 9
 end
 
 -- Puts a brainrot model on one slot of a player's base, facing the plaza.
