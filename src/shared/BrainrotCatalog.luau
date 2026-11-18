@@ -10,7 +10,7 @@ local BrainrotCatalog = {}
 -- Economy and timing tuning
 -- ---------------------------------------------------------------------------
 
-BrainrotCatalog.StartingCash = 100
+BrainrotCatalog.StartingCash = 500
 BrainrotCatalog.BaseSlotCount = 4
 BrainrotCatalog.MaxSlotCount = 10
 -- Cash price of each extra slot, in order (5th slot first, 10th last).

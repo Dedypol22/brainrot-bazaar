@@ -41,7 +41,7 @@ end
 local function sweepWaveAcrossPlaza()
 	local wave = worldMap.WavePart
 	wave.Position = Vector3.new(WAVE_START_X, 13, 0)
-	wave.Visible = true
+	wave.Transparency = 0.35
 
 	local beltWashed = false
 	local playersPushed = false
@@ -63,7 +63,7 @@ local function sweepWaveAcrossPlaza()
 		end
 	end
 
-	wave.Visible = false
+	wave.Transparency = 1
 	wave.Position = Vector3.new(WAVE_START_X, 13, 0)
 end
 

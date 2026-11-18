@@ -388,7 +388,7 @@ local function buildWaveWall()
 	wave.Transparency = 0.35
 	wave.Anchored = true
 	wave.CanCollide = false
-	wave.Visible = false
+	wave.Transparency = 1
 	wave.TopSurface = Enum.SurfaceType.Smooth
 	wave.BottomSurface = Enum.SurfaceType.Smooth
 	wave.Parent = Workspace
