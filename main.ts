@@ -1,9 +1,11 @@
 // Brainrot Bazaar — a complete 3D Roblox brainrot game for make.fun's
 // roblox-brainrot-01 bounty (Node 22, standard library only). The game is
-// this directory's Rojo project: a circular market plaza with a conveyor
-// belt, eight player base plots, and twelve original absurd characters
-// that earn cash every second, plus stealing, base locks, a tsunami wave
-// and rebirths. Build it into game.rbxl with
+// this directory's Rojo project: a circular market plaza with a wide
+// conveyor belt, eight player base plots in two rows flanking the belt,
+// a fenced full-colour arena, and twelve original absurd characters
+// that earn cash every second. Bought and stolen brainrots are carried
+// home on the player's head, and a task bar always shows the next goal.
+// Plus stealing, base locks, a tsunami wave and rebirths. Build it into game.rbxl with
 // `rojo build default.project.json --output game.rbxl`, then this program
 // hands it in: it copies game.rbxl, src/, screenshots/ and PLAY.json from
 // beside this file to /output and writes /output/dossier.json, the summary
