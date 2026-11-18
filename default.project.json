@@ -1,25 +1,43 @@
 {
-  "name": "house-dodge",
+  "name": "BrainrotBazaar",
   "tree": {
     "$className": "DataModel",
-    "Players": {
+    "Lighting": {
       "$properties": {
-        "CharacterAutoLoads": false
+        "Ambient": [
+          0.47,
+          0.47,
+          0.47
+        ],
+        "Brightness": 2,
+        "ClockTime": 10,
+        "GlobalShadows": true,
+        "OutdoorAmbient": [
+          0.55,
+          0.59,
+          0.67
+        ],
+        "Technology": "Future"
       }
     },
+    "ReplicatedStorage": {
+      "$path": "src/shared"
+    },
     "ServerScriptService": {
-      "Server": {
-        "$path": "src/server"
+      "$path": "src/server"
+    },
+    "SoundService": {
+      "$properties": {
+        "RespectFilteringEnabled": true
       }
     },
     "StarterPlayer": {
       "StarterPlayerScripts": {
-        "Client": {
-          "$path": "src/client"
-        }
+        "$path": "src/client"
       }
     },
     "Workspace": {
+      "$className": "Workspace",
       "$properties": {
         "FilteringEnabled": true
       },
@@ -44,24 +62,6 @@
             512
           ]
         }
-      }
-    },
-    "Lighting": {
-      "$properties": {
-        "Ambient": [
-          0,
-          0,
-          0
-        ],
-        "Brightness": 2,
-        "GlobalShadows": true,
-        "Outlines": false,
-        "Technology": "Voxel"
-      }
-    },
-    "SoundService": {
-      "$properties": {
-        "RespectFilteringEnabled": true
       }
     }
   }
