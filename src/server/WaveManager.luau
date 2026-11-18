@@ -1,8 +1,7 @@
 -- WaveManager.luau
--- The tsunami event: every few minutes a warning banner goes out to every
--- player, then a wall of water sweeps across the plaza from one side to the
--- other. Anyone caught outside their own base when it passes is washed back
--- to the spawn point — dashing home in time is the only shelter.
+-- The tsunami event. Every few minutes a glowing wall of water sweeps the
+-- plaza from west to east. Anyone caught outside their own base when it has
+-- passed gets washed back to spawn — so when the banner drops, run home.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -16,13 +15,14 @@ local WaveManager = {}
 local WAVE_START_X = -170
 local WAVE_END_X = 170
 local WAVE_SPEED = 45
-local WAVE_PARK_POSITION = Vector3.new(WAVE_START_X, -60, 0)
+local WAVE_Y = 10 -- centre height while sweeping, so the wall towers over the plaza
+local PARKED_POSITION = Vector3.new(-170, -60, 0)
 
 local remotes = nil
-local wavePart = nil
-local spawnPosition = nil
+local worldMap = nil
 
 local function sweepWaveAcrossPlaza()
+	local wavePart = worldMap and worldMap.WavePart
 	if not wavePart then
 		return
 	end
@@ -30,40 +30,48 @@ local function sweepWaveAcrossPlaza()
 	local duration = distance / WAVE_SPEED
 	local steps = math.max(1, math.floor(duration / 0.05))
 	for step = 0, steps do
-		local x = WAVE_START_X + distance * (step / steps)
-		wavePart.Position = Vector3.new(x, 12, 0)
+		local fraction = step / steps
+		local x = WAVE_START_X + distance * fraction
+		wavePart.Position = Vector3.new(x, WAVE_Y, 0)
 		task.wait(0.05)
 	end
-	wavePart.Position = WAVE_PARK_POSITION
+	wavePart.Position = PARKED_POSITION
 end
 
 local function pushPlayersOutsideBasesBackToSpawn()
-	if not spawnPosition then
+	if not worldMap then
 		return
 	end
 	for _, player in ipairs(Players:GetPlayers()) do
 		local character = player.Character
 		local root = character and character:FindFirstChild("HumanoidRootPart")
 		if root and not BaseManager.IsPositionInsideOwnBase(player, root.Position) then
-			root.CFrame = CFrame.new(spawnPosition)
+			character:PivotTo(CFrame.new(worldMap.SpawnPosition))
 		end
 	end
 end
 
 local function runOneTsunamiEvent()
 	if remotes and remotes.ShowBanner then
-		remotes.ShowBanner:FireAllClients("TSUNAMI INCOMING")
+		remotes.ShowBanner:FireAllClient("TSUNAMI INCOMING")
 	end
-	task.wait(BrainrotCatalog.WaveWarningSeconds)
+	local halfway = BrainrotCatalog.WaveWarningSeconds / 2
+	task.wait(halfway)
+	if remotes and remotes.ShowBanner then
+		remotes.ShowBanner:FireAllClient("GET TO YOUR BASE!")
+	end
+	task.wait(BrainrotCatalog.WaveWarningSeconds - halfway)
+
 	sweepWaveAcrossPlaza()
 	pushPlayersOutsideBasesBackToSpawn()
 end
 
 function WaveManager.Init(remoteFolder, map)
 	remotes = remoteFolder
-	wavePart = map.WavePart
-	spawnPosition = map.SpawnPosition
-
+	worldMap = map
+	-- BrainrotSpawner is required so the module graph matches the other
+	-- managers; the wave itself does not spawn anything.
+	local _ = BrainrotSpawner
 	task.spawn(function()
 		while true do
 			task.wait(BrainrotCatalog.WaveIntervalSeconds)

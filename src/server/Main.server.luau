@@ -1,23 +1,30 @@
 -- Main.server.luau
--- Brainrot Bazaar server bootstrap. Creates the RemoteEvents the client HUD
--- talks to, builds the world, wires the managers together and hooks up the
--- player lifecycle: load data, hand out a base plot, rebuild the base from
--- the save, and keep autosaving while the server runs.
+-- Brainrot Bazaar server bootstrap. Builds the remotes, builds the world,
+-- starts every manager, wires the click callbacks and handles players
+-- joining, leaving and autosaving. Nothing game-specific lives here beyond
+-- the wiring order.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local BrainrotCatalog = require(ReplicatedStorage:WaitForChild("BrainrotCatalog"))
-local MapBuilder = require(script.Parent:WaitForChild("MapBuilder"))
-local PlayerData = require(script.Parent:WaitForChild("PlayerData"))
+
 local BaseManager = require(script.Parent:WaitForChild("BaseManager"))
 local BrainrotSpawner = require(script.Parent:WaitForChild("BrainrotSpawner"))
 local EconomyManager = require(script.Parent:WaitForChild("EconomyManager"))
+local MapBuilder = require(script.Parent:WaitForChild("MapBuilder"))
+local PlayerData = require(script.Parent:WaitForChild("PlayerData"))
 local RebirthManager = require(script.Parent:WaitForChild("RebirthManager"))
 local StealManager = require(script.Parent:WaitForChild("StealManager"))
 local WaveManager = require(script.Parent:WaitForChild("WaveManager"))
 
--- Remotes ----------------------------------------------------------------------
+-- RebirthManager has no Init of its own; requiring it here keeps the whole
+-- module graph loaded before the first player arrives.
+local _ = RebirthManager
+
+-- ---------------------------------------------------------------------------
+-- Remotes
+-- ---------------------------------------------------------------------------
 
 local REMOTE_NAMES = {
 	"RequestBuy",
@@ -31,19 +38,21 @@ local REMOTE_NAMES = {
 	"ShowMessage",
 }
 
-local remotesFolder = Instance.new("Folder")
-remotesFolder.Name = "Remotes"
-remotesFolder.Parent = ReplicatedStorage
+local remoteFolder = Instance.new("Folder")
+remoteFolder.Name = "Remotes"
+remoteFolder.Parent = ReplicatedStorage
 
 local remotes = {}
 for _, remoteName in ipairs(REMOTE_NAMES) do
 	local remote = Instance.new("RemoteEvent")
 	remote.Name = remoteName
-	remote.Parent = remotesFolder
+	remote.Parent = remoteFolder
 	remotes[remoteName] = remote
 end
 
--- World and managers --------------------------------------------------------------
+-- ---------------------------------------------------------------------------
+-- World and managers
+-- ---------------------------------------------------------------------------
 
 local worldMap = MapBuilder.BuildWorld()
 
@@ -53,15 +62,17 @@ EconomyManager.Init(remotes)
 StealManager.Init(remotes)
 WaveManager.Init(remotes, worldMap)
 
--- Click wiring: belt clicks are purchases, base clicks are steal attempts.
 BrainrotSpawner.ClickedCallback = function(player, beltId)
 	EconomyManager.TryBuyBeltBrainrot(player, beltId)
 end
+
 BaseManager.StealClickedCallback = function(clickingPlayer, ownerPlayer, slotIndex)
 	StealManager.TryStealFromClick(clickingPlayer, ownerPlayer, slotIndex)
 end
 
--- Player lifecycle --------------------------------------------------------------------
+-- ---------------------------------------------------------------------------
+-- Players
+-- ---------------------------------------------------------------------------
 
 local function onPlayerAdded(player)
 	PlayerData.Load(player)
@@ -81,7 +92,9 @@ for _, player in ipairs(Players:GetPlayers()) do
 	task.spawn(onPlayerAdded, player)
 end
 
--- Autosave --------------------------------------------------------------------------------
+-- ---------------------------------------------------------------------------
+-- Autosave
+-- ---------------------------------------------------------------------------
 
 task.spawn(function()
 	while true do
@@ -95,8 +108,8 @@ game:BindToClose(function()
 end)
 
 print(string.format(
-	"[BrainrotBazaar] Server started: %d plots, %d characters. Rebirth module ready (x%.2f income per rebirth).",
+	"[BrainrotBazaar] Server started: %d plots, %d characters, belt holds %d.",
 	#worldMap.Plots,
 	#BrainrotCatalog.Characters,
-	1 + BrainrotCatalog.RebirthIncomeBonus
+	BrainrotCatalog.MaxBeltBrainrots
 ))

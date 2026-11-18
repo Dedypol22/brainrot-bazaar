@@ -1,7 +1,7 @@
 -- RebirthManager.luau
--- Rebirthing: once a player has earned the lifetime cash threshold they can
--- reset their cash, earnings and brainrot collection in exchange for a
--- permanent +25% income multiplier per rebirth. Bought base slots are kept.
+-- Rebirth: hand back your whole base and your cash, keep your bought slots,
+-- and earn a permanent +25% income multiplier per rebirth. The gate is
+-- lifetime earnings, so a rich-but-spendy player still qualifies.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -21,7 +21,10 @@ end
 
 function RebirthManager.CanRebirth(player)
 	local data = PlayerData.Get(player)
-	return data ~= nil and data.TotalEarned >= BrainrotCatalog.RebirthCashThreshold
+	if not data then
+		return false
+	end
+	return data.TotalEarned >= BrainrotCatalog.RebirthCashThreshold
 end
 
 function RebirthManager.TryRebirth(player)
@@ -32,6 +35,7 @@ function RebirthManager.TryRebirth(player)
 	data.Rebirths += 1
 	data.Cash = BrainrotCatalog.StartingCash
 	data.TotalEarned = 0
+	-- SlotsBought deliberately survives: room you paid for stays yours.
 	PlayerData.ClearOwnedBrainrots(player)
 	BaseManager.ClearAllBaseBrainrots(player)
 	PlayerData.Sync(player)

@@ -1,17 +1,18 @@
 -- BrainrotCatalog.luau
--- Shared data for Brainrot Bazaar: tuning constants, the rarity and mutation
--- tables, the twelve collectable characters and the small pure helpers the
--- server and the client both use to reason about them. This module holds no
--- game state; it only describes the game.
+-- Shared data module for Brainrot Bazaar: tuning constants, rarities,
+-- mutations, the character roster and small pure helpers used by both the
+-- server modules and the client HUD. Lives in ReplicatedStorage.
 
 local BrainrotCatalog = {}
 
--- Tuning --------------------------------------------------------------------
+-- ---------------------------------------------------------------------------
+-- Tuning
+-- ---------------------------------------------------------------------------
 
 BrainrotCatalog.StartingCash = 500
 BrainrotCatalog.BaseSlotCount = 4
 BrainrotCatalog.MaxSlotCount = 10
--- Price of extra base slots 5 through 10, in the order they are bought.
+-- Price of extra slots 5..10, in the order they are bought.
 BrainrotCatalog.SlotCosts = { 500, 2000, 8000, 25000, 75000, 200000 }
 BrainrotCatalog.SellRefundFraction = 0.5
 BrainrotCatalog.SpawnIntervalSeconds = 12
@@ -32,7 +33,9 @@ BrainrotCatalog.PlotRowZ = 34
 BrainrotCatalog.PlotRowX = { -57, -19, 19, 57 }
 BrainrotCatalog.PlotCount = 8
 
--- Rarities ------------------------------------------------------------------
+-- ---------------------------------------------------------------------------
+-- Rarities
+-- ---------------------------------------------------------------------------
 
 BrainrotCatalog.Rarities = {
 	Common = { Name = "Common", Color = Color3.fromRGB(170, 170, 170), Weight = 45, Order = 1 },
@@ -45,7 +48,9 @@ BrainrotCatalog.Rarities = {
 
 BrainrotCatalog.RarityOrder = { "Common", "Rare", "Epic", "Legendary", "Mythic", "Secret" }
 
--- Mutations -----------------------------------------------------------------
+-- ---------------------------------------------------------------------------
+-- Mutations
+-- ---------------------------------------------------------------------------
 
 BrainrotCatalog.Mutations = {
 	None = { Name = "None", Multiplier = 1, Color = Color3.fromRGB(255, 255, 255) },
@@ -54,9 +59,9 @@ BrainrotCatalog.Mutations = {
 	Rainbow = { Name = "Rainbow", Multiplier = 10, Color = Color3.fromRGB(255, 100, 220) },
 }
 
--- Characters ----------------------------------------------------------------
--- The cast of the bazaar, cheapest first. IncomePerSecond is the base rate
--- before any mutation multiplier or rebirth bonus is applied.
+-- ---------------------------------------------------------------------------
+-- Characters
+-- ---------------------------------------------------------------------------
 
 BrainrotCatalog.Characters = {
 	{
@@ -145,7 +150,9 @@ BrainrotCatalog.PlotColors = {
 	Color3.fromRGB(200, 200, 200),
 }
 
--- Helpers -------------------------------------------------------------------
+-- ---------------------------------------------------------------------------
+-- Helpers
+-- ---------------------------------------------------------------------------
 
 function BrainrotCatalog.GetCharacterById(characterId)
 	for _, character in ipairs(BrainrotCatalog.Characters) do
@@ -173,17 +180,17 @@ function BrainrotCatalog.GetRarityColor(rarityName)
 end
 
 function BrainrotCatalog.GetMutationMultiplier(mutationName)
-	local mutation = BrainrotCatalog.Mutations[mutationName]
-	if mutation then
-		return mutation.Multiplier
+	local info = BrainrotCatalog.Mutations[mutationName]
+	if info then
+		return info.Multiplier
 	end
 	return 1
 end
 
 function BrainrotCatalog.GetMutationColor(mutationName)
-	local mutation = BrainrotCatalog.Mutations[mutationName]
-	if mutation then
-		return mutation.Color
+	local info = BrainrotCatalog.Mutations[mutationName]
+	if info then
+		return info.Color
 	end
 	return Color3.fromRGB(255, 255, 255)
 end

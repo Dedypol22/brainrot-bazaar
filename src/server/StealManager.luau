@@ -1,10 +1,9 @@
 -- StealManager.luau
--- Carrying: the heart of the bazaar. Buying a brainrot from the belt and
--- stealing one from another player's base both work the same way — the
--- brainrot is lifted over the carrier's head and only becomes theirs when
--- they dash back inside their own base with it. A steal that never makes it
--- home (the thief leaves, or the carry is interrupted) is restored to its
--- victim.
+-- Carries brainrots on players' heads. A carry starts either as a purchase
+-- (bought from the belt, walk it home to claim it) or as a theft (clicked on
+-- someone else's base, run home before... well, just run home). Reaching
+-- your own base completes the carry; vanishing mid-carry hands a stolen
+-- brainrot back to its owner.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -19,69 +18,47 @@ local StealManager = {}
 
 local CARRY_HEIGHT = 6.5
 
--- [userId] = { Model, Character, Mutation, Slot, Victim, VictimSlot }
--- Victim is nil for a belt purchase and the robbed player for a steal.
+-- [player] = { Model, Character, Mutation, Slot, Victim, VictimSlot }
 local carries = {}
 
-local function headPositionOf(player)
+local function headPosition(player)
 	local character = player.Character
-	if not character then
-		return nil
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if root then
+		return root.Position + Vector3.new(0, CARRY_HEIGHT, 0), root
 	end
-	local head = character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart")
-	if head then
-		return head.Position
-	end
-	return nil
+	return nil, nil
 end
 
 local function buildCarryModel(player, character, mutationName)
-	local headPosition = headPositionOf(player) or Vector3.new(0, 8, 0)
-	local model = BrainrotSpawner.BuildBrainrotModel(
-		character,
-		mutationName,
-		headPosition + Vector3.new(0, CARRY_HEIGHT, 0),
-		0,
-		false
-	)
+	local position = headPosition(player)
+	if not position then
+		local plot = BaseManager.GetPlotForPlayer(player)
+		if plot then
+			position = plot.Center + Vector3.new(0, CARRY_HEIGHT, 0)
+		else
+			position = Vector3.new(0, CARRY_HEIGHT, 0)
+		end
+	end
+	local model = BrainrotSpawner.BuildBrainrotModel(character, mutationName, position, 0, false)
 	model.Parent = Workspace
 	return model
 end
 
--- Ending a carry without delivering it: a stolen brainrot goes back onto its
--- victim's base (its save entry was never removed), a purchase simply ends.
-local function restoreCarry(carry)
-	if carry.Victim then
-		local victim = carry.Victim
-		if victim.Parent and PlayerData.GetOwnedAtSlot(victim, carry.VictimSlot) then
-			BaseManager.PlaceBrainrotOnBase(victim, carry.Character, carry.Mutation, carry.VictimSlot)
-		end
-	end
-	if carry.Model then
-		carry.Model:Destroy()
-	end
-end
-
-local function completeCarry(player, carry)
-	if carry.Victim then
-		PlayerData.RemoveOwnedBrainrot(carry.Victim, carry.VictimSlot)
-	end
-	PlayerData.AddOwnedBrainrot(player, carry.Character.Id, carry.Mutation, carry.Slot)
-	BaseManager.PlaceBrainrotOnBase(player, carry.Character, carry.Mutation, carry.Slot)
-	if carry.Model then
-		carry.Model:Destroy()
-	end
-	carries[player.UserId] = nil
-end
-
--- Queries ---------------------------------------------------------------------------
-
 function StealManager.IsCarrying(player)
-	return carries[player.UserId] ~= nil
+	return carries[player] ~= nil
+end
+
+function StealManager.GetCarriedPurchaseSlot(player)
+	local carry = carries[player]
+	if carry and carry.Victim == nil then
+		return carry.Slot
+	end
+	return nil
 end
 
 function StealManager.GetCarrySummary(player)
-	local carry = carries[player.UserId]
+	local carry = carries[player]
 	if not carry then
 		return nil
 	end
@@ -92,60 +69,52 @@ function StealManager.GetCarrySummary(player)
 	}
 end
 
-function StealManager.GetCarriedPurchaseSlot(player)
-	local carry = carries[player.UserId]
-	if carry and carry.Victim == nil then
-		return carry.Slot
-	end
-	return nil
-end
-
--- Starting carries ---------------------------------------------------------------------
-
 function StealManager.StartPurchaseCarry(player, character, mutationName, slotIndex)
-	if carries[player.UserId] then
-		return
+	if carries[player] then
+		return false
 	end
 	local model = buildCarryModel(player, character, mutationName)
-	carries[player.UserId] = {
+	carries[player] = {
 		Model = model,
 		Character = character,
-		Mutation = mutationName,
+		Mutation = mutationName or "None",
 		Slot = slotIndex,
 		Victim = nil,
 		VictimSlot = nil,
 	}
+	return true
 end
 
 function StealManager.TryStealBrainrot(thief, victim, slotIndex)
-	if thief == victim then
+	if not thief or not victim or thief == victim then
 		return false
 	end
-	if carries[thief.UserId] then
-		return false
-	end
-	local victimEntry = PlayerData.GetOwnedAtSlot(victim, slotIndex)
-	if not victimEntry then
+	if carries[thief] then
 		return false
 	end
 	if BaseManager.IsBaseLocked(victim) then
+		return false
+	end
+	local entry = PlayerData.GetOwnedAtSlot(victim, slotIndex)
+	if not entry then
+		return false
+	end
+	local character = BrainrotCatalog.GetCharacterById(entry.CharacterId)
+	if not character then
 		return false
 	end
 	local freeSlot = PlayerData.FindFreeSlot(thief)
 	if not freeSlot then
 		return false
 	end
-	local character = BrainrotCatalog.GetCharacterById(victimEntry.CharacterId)
-	if not character then
-		return false
-	end
-
+	-- The model leaves the victim's base now; the data only changes hands
+	-- once the thief actually makes it home.
 	BaseManager.RemoveBrainrotFromBase(victim, slotIndex)
-	local model = buildCarryModel(thief, character, victimEntry.Mutation)
-	carries[thief.UserId] = {
+	local model = buildCarryModel(thief, character, entry.Mutation)
+	carries[thief] = {
 		Model = model,
 		Character = character,
-		Mutation = victimEntry.Mutation,
+		Mutation = entry.Mutation,
 		Slot = freeSlot,
 		Victim = victim,
 		VictimSlot = slotIndex,
@@ -157,69 +126,93 @@ function StealManager.TryStealFromClick(clickingPlayer, ownerPlayer, slotIndex)
 	return StealManager.TryStealBrainrot(clickingPlayer, ownerPlayer, slotIndex)
 end
 
+local function restoreStealToVictim(carry)
+	local victim = carry.Victim
+	if victim and victim.Parent and PlayerData.GetOwnedAtSlot(victim, carry.VictimSlot) then
+		BaseManager.PlaceBrainrotOnBase(victim, carry.Character, carry.Mutation, carry.VictimSlot)
+	end
+end
+
 function StealManager.CancelCarry(player)
-	local carry = carries[player.UserId]
+	local carry = carries[player]
 	if not carry then
 		return
 	end
-	restoreCarry(carry)
-	carries[player.UserId] = nil
+	carries[player] = nil
+	if carry.Victim then
+		restoreStealToVictim(carry)
+	end
+	if carry.Model then
+		carry.Model:Destroy()
+	end
 end
 
--- The watch loop -------------------------------------------------------------------------
+local function completeCarry(player, carry)
+	carries[player] = nil
+	if carry.Model then
+		carry.Model:Destroy()
+	end
+	if carry.Victim then
+		-- The victim's copy goes away as the thief's copy appears.
+		PlayerData.RemoveOwnedBrainrot(carry.Victim, carry.VictimSlot)
+		BaseManager.RemoveBrainrotFromBase(carry.Victim, carry.VictimSlot)
+	end
+	PlayerData.AddOwnedBrainrot(player, carry.Character.Id, carry.Mutation, carry.Slot)
+	BaseManager.PlaceBrainrotOnBase(player, carry.Character, carry.Mutation, carry.Slot)
+end
 
 local function watchCarries()
 	while true do
-		task.wait(0.1)
-		local arrived = {}
-		for userId, carry in pairs(carries) do
-			local player = Players:GetPlayerByUserId(userId)
-			if not player then
-				restoreCarry(carry)
-				carries[userId] = nil
-			elseif not carry.Model or not carry.Model.Parent then
-				restoreCarry(carry)
-				carries[userId] = nil
-			else
-				local character = player.Character
-				local root = character and character:FindFirstChild("HumanoidRootPart")
-				local headPosition = headPositionOf(player)
-				if headPosition then
-					local rotation = carry.Model:GetPivot().Rotation
-					carry.Model:PivotTo(
-						CFrame.new(headPosition + Vector3.new(0, CARRY_HEIGHT, 0)) * rotation
-					)
-				end
-				if root and BaseManager.IsPositionInsideOwnBase(player, root.Position) then
-					table.insert(arrived, player)
-				end
-			end
+		local players = {}
+		for player in pairs(carries) do
+			table.insert(players, player)
 		end
-		for _, player in ipairs(arrived) do
-			local carry = carries[player.UserId]
+		for _, player in ipairs(players) do
+			local carry = carries[player]
 			if carry then
-				completeCarry(player, carry)
+				if carry.Victim and not carry.Victim.Parent then
+					-- Victim left mid-theft: their save still holds the
+					-- brainrot, so the carry simply evaporates.
+					carries[player] = nil
+					if carry.Model then
+						carry.Model:Destroy()
+					end
+				elseif not carry.Model or not carry.Model.Parent then
+					-- The carried model was destroyed some other way.
+					carries[player] = nil
+					if carry.Victim then
+						restoreStealToVictim(carry)
+					end
+				else
+					local position, root = headPosition(player)
+					if root then
+						carry.Model:PivotTo(CFrame.new(position))
+						if BaseManager.IsPositionInsideOwnBase(player, root.Position) then
+							completeCarry(player, carry)
+						end
+					end
+				end
 			end
 		end
+		task.wait(0.1)
 	end
 end
 
 function StealManager.Init(remoteFolder)
-	local remotes = remoteFolder
-	if remotes and remotes.RequestSteal then
-		remotes.RequestSteal.OnServerEvent:Connect(function(player, ownerPlayer, slotIndex)
+	local requestSteal = remoteFolder and remoteFolder.RequestSteal
+	if requestSteal then
+		requestSteal.OnServerEvent:Connect(function(player, ownerPlayer, slotIndex)
 			if typeof(ownerPlayer) == "Instance" and ownerPlayer:IsA("Player")
-				and typeof(slotIndex) == "number" then
-				StealManager.TryStealBrainrot(player, ownerPlayer, slotIndex)
+				and typeof(slotIndex) == "number"
+			then
+				StealManager.TryStealBrainrot(player, ownerPlayer, math.floor(slotIndex))
 			end
 		end)
 	end
 
 	Players.PlayerRemoving:Connect(function(player)
-		local carry = carries[player.UserId]
-		if carry then
-			restoreCarry(carry)
-			carries[player.UserId] = nil
+		if carries[player] then
+			StealManager.CancelCarry(player)
 		end
 	end)
 

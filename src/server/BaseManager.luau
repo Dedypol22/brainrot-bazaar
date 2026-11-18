@@ -1,8 +1,7 @@
 -- BaseManager.luau
--- Looks after the eight base plots: who owns which plot, the brainrot models
--- standing on a base, the plot signs, and the timed base lock that protects a
--- base from stealing. Plot geometry itself comes from MapBuilder; the models
--- come from BrainrotSpawner; ownership data lives in PlayerData.
+-- Owns the eight base plots: who sits where, the brainrot models standing on
+-- each base, the plot signs, base locking and slot revealing. The models
+-- themselves are built by BrainrotSpawner; this module just places them.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -14,56 +13,58 @@ local PlayerData = require(script.Parent:WaitForChild("PlayerData"))
 
 local BaseManager = {}
 
--- Set by Main: called when a player clicks a brainrot standing on a base.
-BaseManager.StealClickedCallback = function(clickingPlayer, ownerPlayer, slotIndex) end
+-- Assigned by Main; called when someone clicks a brainrot on another base.
+BaseManager.StealClickedCallback = function(_clickingPlayer, _ownerPlayer, _slotIndex) end
 
-local plots = {}
-local playerPlots = {} -- [userId] = plot
-local plotModels = {} -- [userId] = { [slotIndex] = Model }
-local lockStates = {} -- [userId] = { LockedUntil = n, CooldownUntil = n }
+local plots = nil
+local plotByPlayer = {} -- [player] = plot
+local ownerNameByPlot = {} -- [plot] = display string for the sign
+local modelsByPlayer = {} -- [player] = { [slotIndex] = Model }
+local lockByPlayer = {} -- [player] = { LockedUntil = t, CooldownUntil = t }
 
-function BaseManager.Init(worldMap)
-	plots = worldMap.Plots
+local function formatMoney(amount)
+	local text = tostring(math.floor(amount))
+	local formatted = text:reverse():gsub("(%d%d%d)", "%1,"):reverse()
+	formatted = formatted:gsub("^,", "")
+	return formatted
 end
 
--- Plot signs ----------------------------------------------------------------------
-
 local function updateSignForPlot(plot, incomePerSecond)
-	if not plot.Sign then
+	if not plot or not plot.Sign then
 		return
 	end
 	if plot.OwnerUserId == 0 then
 		plot.Sign.Text = "BASE " .. plot.Index
 	else
-		local owner = Players:GetPlayerByUserId(plot.OwnerUserId)
-		local ownerName = owner and owner.Name or "Player"
-		plot.Sign.Text = ownerName .. "\n$" .. tostring(incomePerSecond) .. "/s"
+		local name = ownerNameByPlot[plot] or "Player"
+		plot.Sign.Text = name .. "\n$" .. formatMoney(incomePerSecond or 0) .. "/s"
 	end
 end
 
-function BaseManager.UpdatePlotSign(player, incomePerSecond)
-	local plot = playerPlots[player.UserId]
-	if plot then
-		updateSignForPlot(plot, incomePerSecond)
+function BaseManager.Init(worldMap)
+	plots = worldMap.Plots
+	for _, plot in ipairs(plots) do
+		updateSignForPlot(plot, 0)
 	end
 end
-
--- Plot ownership --------------------------------------------------------------------
 
 function BaseManager.GetPlotForPlayer(player)
-	return playerPlots[player.UserId]
+	return plotByPlayer[player]
 end
 
 function BaseManager.AssignPlotToPlayer(player)
-	local existing = playerPlots[player.UserId]
-	if existing then
-		return existing
+	if plotByPlayer[player] then
+		return plotByPlayer[player]
+	end
+	if not plots then
+		return nil
 	end
 	for _, plot in ipairs(plots) do
 		if plot.OwnerUserId == 0 then
 			plot.OwnerUserId = player.UserId
-			playerPlots[player.UserId] = plot
-			plotModels[player.UserId] = {}
+			ownerNameByPlot[plot] = player.Name
+			plotByPlayer[player] = plot
+			modelsByPlayer[player] = modelsByPlayer[player] or {}
 			updateSignForPlot(plot, 0)
 			return plot
 		end
@@ -72,31 +73,29 @@ function BaseManager.AssignPlotToPlayer(player)
 end
 
 function BaseManager.ReleasePlotForPlayer(player)
-	local plot = playerPlots[player.UserId]
-	if not plot then
-		return
-	end
+	local plot = plotByPlayer[player]
 	BaseManager.ClearAllBaseBrainrots(player)
-	plot.OwnerUserId = 0
-	updateSignForPlot(plot, 0)
-	playerPlots[player.UserId] = nil
-	plotModels[player.UserId] = nil
-	lockStates[player.UserId] = nil
+	plotByPlayer[player] = nil
+	modelsByPlayer[player] = nil
+	lockByPlayer[player] = nil
+	if plot then
+		plot.OwnerUserId = 0
+		ownerNameByPlot[plot] = nil
+		updateSignForPlot(plot, 0)
+	end
 end
 
 function BaseManager.IsPositionInsideOwnBase(player, position)
-	local plot = playerPlots[player.UserId]
+	local plot = plotByPlayer[player]
 	if not plot then
 		return false
 	end
-	return math.abs(position.X - plot.Center.X) <= 13
-		and math.abs(position.Z - plot.Center.Z) <= 9
+	return math.abs(position.X - plot.Center.X) <= 12
+		and math.abs(position.Z - plot.Center.Z) <= 8
 end
 
--- Brainrot models on bases ------------------------------------------------------------
-
 function BaseManager.PlaceBrainrotOnBase(player, character, mutationName, slotIndex)
-	local plot = playerPlots[player.UserId]
+	local plot = plotByPlayer[player]
 	if not plot then
 		return nil
 	end
@@ -104,34 +103,30 @@ function BaseManager.PlaceBrainrotOnBase(player, character, mutationName, slotIn
 	if not pad then
 		pad = MapBuilder.CreateSlotPad(plot, slotIndex)
 	end
+	BaseManager.RemoveBrainrotFromBase(player, slotIndex)
 	-- North plots face south toward the belt and vice versa.
-	local yaw = plot.Center.Z < 0 and math.pi or 0
-	local anchor = Vector3.new(
-		pad.Position.X,
-		pad.Position.Y + pad.Size.Y / 2 + 2,
-		pad.Position.Z
-	)
-	local model = BrainrotSpawner.BuildBrainrotModel(character, mutationName, anchor, yaw, false)
+	local yaw = (plot.Center.Z < 0) and 0 or math.pi
+	local position = pad.Position + Vector3.new(0, 0.15, 0)
+	local model = BrainrotSpawner.BuildBrainrotModel(character, mutationName, position, yaw, false)
 	model.Parent = plot.Model
-
 	local mainPart = model.PrimaryPart
 	if mainPart then
 		local detector = Instance.new("ClickDetector")
-		detector.Parent = mainPart
+		detector.MaxActivationDistance = 24
 		detector.MouseClick:Connect(function(clickingPlayer)
-			if BaseManager.StealClickedCallback then
+			if clickingPlayer ~= player then
 				BaseManager.StealClickedCallback(clickingPlayer, player, slotIndex)
 			end
 		end)
+		detector.Parent = mainPart
 	end
-
-	plotModels[player.UserId] = plotModels[player.UserId] or {}
-	plotModels[player.UserId][slotIndex] = model
+	modelsByPlayer[player] = modelsByPlayer[player] or {}
+	modelsByPlayer[player][slotIndex] = model
 	return model
 end
 
 function BaseManager.RemoveBrainrotFromBase(player, slotIndex)
-	local models = plotModels[player.UserId]
+	local models = modelsByPlayer[player]
 	if not models then
 		return
 	end
@@ -143,18 +138,18 @@ function BaseManager.RemoveBrainrotFromBase(player, slotIndex)
 end
 
 function BaseManager.ClearAllBaseBrainrots(player)
-	local models = plotModels[player.UserId]
+	local models = modelsByPlayer[player]
 	if not models then
 		return
 	end
-	for _, model in pairs(models) do
+	for slotIndex, model in pairs(models) do
 		model:Destroy()
+		models[slotIndex] = nil
 	end
-	plotModels[player.UserId] = {}
 end
 
 function BaseManager.GetBaseModelAtSlot(player, slotIndex)
-	local models = plotModels[player.UserId]
+	local models = modelsByPlayer[player]
 	if not models then
 		return nil
 	end
@@ -174,52 +169,78 @@ function BaseManager.RebuildBaseFromSave(player)
 	end
 end
 
--- Base locking ---------------------------------------------------------------------------
-
-local function lockStateFor(player)
-	local state = lockStates[player.UserId]
-	if not state then
-		state = { LockedUntil = 0, CooldownUntil = 0 }
-		lockStates[player.UserId] = state
-	end
-	return state
-end
+-- ---------------------------------------------------------------------------
+-- Locking
+-- ---------------------------------------------------------------------------
 
 function BaseManager.IsBaseLocked(player)
-	local state = lockStates[player.UserId]
-	return state ~= nil and os.clock() < state.LockedUntil
+	local state = lockByPlayer[player]
+	if not state then
+		return false
+	end
+	return os.clock() < state.LockedUntil
 end
 
 function BaseManager.LockBase(player)
 	local now = os.clock()
-	local state = lockStateFor(player)
-	if now < state.LockedUntil or now < state.CooldownUntil then
+	local state = lockByPlayer[player]
+	if state and now < state.CooldownUntil then
 		return false
 	end
-	state.LockedUntil = now + BrainrotCatalog.LockDurationSeconds
-	state.CooldownUntil = state.LockedUntil + BrainrotCatalog.LockCooldownSeconds
+	if state and now < state.LockedUntil then
+		return false
+	end
+	local lockedUntil = now + BrainrotCatalog.LockDurationSeconds
+	lockByPlayer[player] = {
+		LockedUntil = lockedUntil,
+		CooldownUntil = lockedUntil + BrainrotCatalog.LockCooldownSeconds,
+	}
 	return true
 end
 
 function BaseManager.GetLockStatus(player)
 	local now = os.clock()
-	local state = lockStates[player.UserId]
-	local lockedUntil = state and state.LockedUntil or 0
-	local cooldownUntil = state and state.CooldownUntil or 0
+	local state = lockByPlayer[player]
+	if not state then
+		return { Locked = false, SecondsLeft = 0, CooldownLeft = 0 }
+	end
+	local locked = now < state.LockedUntil
 	return {
-		Locked = now < lockedUntil,
-		SecondsLeft = math.ceil(math.max(0, lockedUntil - now)),
-		CooldownLeft = math.ceil(math.max(0, cooldownUntil - now)),
+		Locked = locked,
+		SecondsLeft = locked and math.ceil(state.LockedUntil - now) or 0,
+		CooldownLeft = math.max(0, math.ceil(state.CooldownUntil - now)),
 	}
 end
 
--- Slots -------------------------------------------------------------------------------------
+-- ---------------------------------------------------------------------------
+-- Slots and signs
+-- ---------------------------------------------------------------------------
 
 function BaseManager.RevealExtraSlot(player, slotIndex)
-	local plot = playerPlots[player.UserId]
-	if plot then
+	local plot = plotByPlayer[player]
+	if not plot then
+		return
+	end
+	if not plot.Pads[slotIndex] then
 		MapBuilder.CreateSlotPad(plot, slotIndex)
 	end
 end
+
+function BaseManager.UpdatePlotSign(player, incomePerSecond)
+	local plot = plotByPlayer[player]
+	if plot then
+		updateSignForPlot(plot, incomePerSecond)
+	end
+end
+
+-- Keep signs honest when a player renames (display names do not change in
+-- session, but leaving players should not strand their name on a sign).
+Players.PlayerRemoving:Connect(function(player)
+	if plotByPlayer[player] then
+		-- Main also releases the plot; this is only a sign safety net.
+		local plot = plotByPlayer[player]
+		ownerNameByPlot[plot] = player.Name
+	end
+end)
 
 return BaseManager
