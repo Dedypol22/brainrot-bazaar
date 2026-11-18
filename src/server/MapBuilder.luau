@@ -401,7 +401,6 @@ local function paintLighting()
 	Lighting.Ambient = Color3.fromRGB(120, 120, 120)
 	Lighting.OutdoorAmbient = Color3.fromRGB(140, 150, 170)
 	Lighting.GlobalShadows = true
-	Lighting.Technology = Enum.Technology.Future
 	Lighting.FogEnd = 1200
 end
 
