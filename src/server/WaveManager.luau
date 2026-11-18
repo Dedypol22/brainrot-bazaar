@@ -1,9 +1,8 @@
--- WaveManager.luau (server module)
--- Owns the tsunami event: about every three minutes a warning banner
--- counts down ten seconds, then a huge wall of water sweeps across the
--- plaza. Brainrots still riding the conveyor are washed away, and players
--- caught outside their own base are pushed back to the spawn area.
--- Brainrots safe on a base are never touched.
+-- WaveManager.luau
+-- The tsunami event: every few minutes a warning banner goes out to every
+-- player, then a wall of water sweeps across the plaza from one side to the
+-- other. Anyone caught outside their own base when it passes is washed back
+-- to the spawn point — dashing home in time is the only shelter.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -14,82 +13,61 @@ local BrainrotSpawner = require(script.Parent:WaitForChild("BrainrotSpawner"))
 
 local WaveManager = {}
 
-local remotes = nil
-local worldMap = nil
-
 local WAVE_START_X = -170
 local WAVE_END_X = 170
-local WAVE_SPEED = 45 -- studs per second across the plaza
+local WAVE_SPEED = 45
+local WAVE_PARK_POSITION = Vector3.new(WAVE_START_X, -60, 0)
 
--- Pushes every player standing outside their own base back to spawn.
+local remotes = nil
+local wavePart = nil
+local spawnPosition = nil
+
+local function sweepWaveAcrossPlaza()
+	if not wavePart then
+		return
+	end
+	local distance = WAVE_END_X - WAVE_START_X
+	local duration = distance / WAVE_SPEED
+	local steps = math.max(1, math.floor(duration / 0.05))
+	for step = 0, steps do
+		local x = WAVE_START_X + distance * (step / steps)
+		wavePart.Position = Vector3.new(x, 12, 0)
+		task.wait(0.05)
+	end
+	wavePart.Position = WAVE_PARK_POSITION
+end
+
 local function pushPlayersOutsideBasesBackToSpawn()
+	if not spawnPosition then
+		return
+	end
 	for _, player in ipairs(Players:GetPlayers()) do
 		local character = player.Character
-		if character then
-			local root = character:FindFirstChild("HumanoidRootPart")
-			if root and not BaseManager.IsPositionInsideOwnBase(player, root.Position) then
-				root.CFrame = CFrame.new(worldMap.SpawnPosition)
-				if remotes then
-					remotes.ShowMessage:FireClient(player, "The wave swept you back to spawn!")
-				end
-			end
+		local root = character and character:FindFirstChild("HumanoidRootPart")
+		if root and not BaseManager.IsPositionInsideOwnBase(player, root.Position) then
+			root.CFrame = CFrame.new(spawnPosition)
 		end
 	end
 end
 
--- Slides the wall across the plaza, washing the belt clean as it passes.
-local function sweepWaveAcrossPlaza()
-	local wave = worldMap.WavePart
-	wave.Position = Vector3.new(WAVE_START_X, 13, 0)
-	wave.Transparency = 0.35
-
-	local beltWashed = false
-	local playersPushed = false
-	local x = WAVE_START_X
-	while x < WAVE_END_X do
-		task.wait(0.05)
-		x = x + WAVE_SPEED * 0.05
-		wave.Position = Vector3.new(x, 13, 0)
-		if not beltWashed and x >= 0 then
-			beltWashed = true
-			BrainrotSpawner.ClearAllBeltBrainrots()
-			if remotes then
-				remotes.ShowMessage:FireAllClients("The wave washed the conveyor clean!")
-			end
-		end
-		if not playersPushed and x >= -40 then
-			playersPushed = true
-			pushPlayersOutsideBasesBackToSpawn()
-		end
-	end
-
-	wave.Transparency = 1
-	wave.Position = Vector3.new(WAVE_START_X, 13, 0)
-end
-
--- One full event: warn, count down, then sweep.
 local function runOneTsunamiEvent()
-	if remotes then
-		for secondsLeft = BrainrotCatalog.WaveWarningSeconds, 1, -1 do
-			remotes.ShowBanner:FireAllClients("TSUNAMI INCOMING! Get to your base! " .. secondsLeft .. "s", 1)
-			task.wait(1)
-		end
-		remotes.ShowBanner:FireAllClients("TSUNAMI! HOLD ON!", 3)
+	if remotes and remotes.ShowBanner then
+		remotes.ShowBanner:FireAllClients("TSUNAMI INCOMING")
 	end
+	task.wait(BrainrotCatalog.WaveWarningSeconds)
 	sweepWaveAcrossPlaza()
+	pushPlayersOutsideBasesBackToSpawn()
 end
 
 function WaveManager.Init(remoteFolder, map)
 	remotes = remoteFolder
-	worldMap = map
+	wavePart = map.WavePart
+	spawnPosition = map.SpawnPosition
 
 	task.spawn(function()
 		while true do
 			task.wait(BrainrotCatalog.WaveIntervalSeconds)
-			local ok, err = pcall(runOneTsunamiEvent)
-			if not ok then
-				warn("[BrainrotBazaar] Tsunami event failed: " .. tostring(err))
-			end
+			runOneTsunamiEvent()
 		end
 	end)
 end

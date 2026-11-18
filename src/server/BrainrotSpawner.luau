@@ -1,42 +1,42 @@
--- BrainrotSpawner.luau (server module)
--- Builds brainrot creature models from Parts only, spawns them on the
--- conveyor belt, rides them along it, and despawns them at the end when
--- nobody buys them. Also builds the same models for player bases.
--- A click on a belt brainrot tries to buy it (through the callback Main
--- wires up to the economy manager).
+-- BrainrotSpawner.luau
+-- Builds the blocky brainrot character models out of Parts and runs the
+-- conveyor belt: spawning fresh brainrots at one end, sliding them along the
+-- belt, and removing the ones nobody buys before they fall off the far end.
+-- The same model builder is used for belt brainrots, base brainrots and the
+-- models players carry home over their heads.
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local BrainrotCatalog = require(ReplicatedStorage:WaitForChild("BrainrotCatalog"))
 
 local BrainrotSpawner = {}
 
--- Called by Main with (player, beltId) when a belt brainrot is clicked.
-BrainrotSpawner.ClickedCallback = nil
+-- Set by Main: called when a player clicks a brainrot riding the belt.
+BrainrotSpawner.ClickedCallback = function(player, beltId) end
 
-local beltBrainrots = {} -- array of { Id, Character, Mutation, Cost, Rate, Model, PositionX }
-local nextBeltId = 1
-local map = nil
-
--- Creatures are built larger than life on purpose: in the genre's hit
--- games the brainrots tower over the belt so they read clearly from a
--- distance. Every part size and offset in the model builder is scaled
--- by this factor, so feet stay planted exactly on the belt or pad.
--- BuildBrainrotModel can pass a smaller scale for base creatures;
--- model building is single-threaded, so one active scale is safe.
 local MODEL_SCALE = 2.1
-local activeScale = MODEL_SCALE
+local BELT_YAW = -math.pi / 2
+
+local beltEntries = {}
+local nextBeltId = 0
+local beltFolder = nil
+
+-- Model construction --------------------------------------------------------------
+-- Sizes and offsets below are written in unscaled units; every part is placed
+-- relative to the model's base CFrame, whose origin is the centre of the body.
 
 local function makeModelPart(model, baseCFrame, name, size, offset, color, material, shape)
 	local part = Instance.new("Part")
 	part.Name = name
-	part.Size = size * activeScale
-	part.CFrame = baseCFrame * CFrame.new(offset * activeScale)
+	part.Size = size
+	part.CFrame = baseCFrame * CFrame.new(offset)
 	part.Color = color
 	part.Material = material or Enum.Material.SmoothPlastic
-	part.Shape = shape or Enum.PartType.Block
+	if shape then
+		part.Shape = shape
+	end
 	part.Anchored = true
 	part.CanCollide = false
 	part.TopSurface = Enum.SurfaceType.Smooth
@@ -45,260 +45,291 @@ local function makeModelPart(model, baseCFrame, name, size, offset, color, mater
 	return part
 end
 
--- Adds the one prop that makes a character recognisable.
-local function addCharacterFeature(model, baseCFrame, character)
-	local body = character.BodyColor
+-- A flat cylinder standing upright (hats, bagels): the part's own axis is X,
+-- so it is rolled 90 degrees to stand on end.
+local function makeCylinderPart(model, baseCFrame, name, height, diameter, offset, color, s)
+	local part = Instance.new("Part")
+	part.Name = name
+	part.Shape = Enum.PartType.Cylinder
+	part.Size = Vector3.new(height * s, diameter * s, diameter * s)
+	part.CFrame = baseCFrame * CFrame.new(offset * s) * CFrame.Angles(0, 0, math.rad(90))
+	part.Color = color
+	part.Material = Enum.Material.SmoothPlastic
+	part.Anchored = true
+	part.CanCollide = false
+	part.TopSurface = Enum.SurfaceType.Smooth
+	part.BottomSurface = Enum.SurfaceType.Smooth
+	part.Parent = model
+	return part
+end
+
+local function addCharacterFeature(model, baseCFrame, character, s)
 	local accent = character.AccentColor
+	local function P(name, size, offset, color, material, shape)
+		return makeModelPart(model, baseCFrame, name, size * s, offset * s, color, material, shape)
+	end
 	local feature = character.Feature
 
 	if feature == "Phone" then
-		-- A little black phone in the right hand.
-		makeModelPart(model, baseCFrame, "Phone", Vector3.new(0.2, 1, 0.6), Vector3.new(0.6, 1.8, -1.4), Color3.fromRGB(30, 30, 30), Enum.Material.SmoothPlastic)
+		P("Phone", Vector3.new(0.4, 1.0, 0.7), Vector3.new(1.45, 0.15, 0), accent)
+		P("PhoneScreen", Vector3.new(0.15, 0.7, 0.5), Vector3.new(1.68, 0.15, 0),
+			Color3.fromRGB(180, 240, 255), Enum.Material.Neon)
 	elseif feature == "Sword" then
-		-- A french-fry sword held high.
-		local sword = makeModelPart(model, baseCFrame, "FrySword", Vector3.new(0.25, 2.4, 0.5), Vector3.new(0, 3, -1.4), accent, Enum.Material.Neon)
-		sword.CFrame = baseCFrame * CFrame.new(0, 3, -1.4) * CFrame.Angles(0, 0, math.rad(20))
+		P("SwordBlade", Vector3.new(0.16, 1.9, 0.5), Vector3.new(1.55, 0.35, 0),
+			Color3.fromRGB(210, 215, 225), Enum.Material.Metal)
+		P("SwordGuard", Vector3.new(0.6, 0.2, 0.9), Vector3.new(1.55, -0.55, 0), accent)
 	elseif feature == "Headphones" then
-		makeModelPart(model, baseCFrame, "HeadphoneLeft", Vector3.new(0.4, 1, 1), Vector3.new(0, 3.6, -1), accent, Enum.Material.SmoothPlastic)
-		makeModelPart(model, baseCFrame, "HeadphoneRight", Vector3.new(0.4, 1, 1), Vector3.new(0, 3.6, 1), accent, Enum.Material.SmoothPlastic)
-		makeModelPart(model, baseCFrame, "HeadphoneBand", Vector3.new(1.6, 0.3, 2.2), Vector3.new(0, 4.1, 0), accent, Enum.Material.SmoothPlastic)
+		P("HeadphoneBand", Vector3.new(2.3, 0.3, 0.5), Vector3.new(0, 1.12, 0),
+			Color3.fromRGB(40, 40, 45))
+		P("HeadphoneCupL", Vector3.new(0.4, 0.9, 1.05), Vector3.new(-1.32, 0.3, 0), accent)
+		P("HeadphoneCupR", Vector3.new(0.4, 0.9, 1.05), Vector3.new(1.32, 0.3, 0), accent)
 	elseif feature == "CaptainHat" then
-		local hat = makeModelPart(model, baseCFrame, "CaptainHat", Vector3.new(1.6, 0.4, 1.6), Vector3.new(0, 4.1, 0), Color3.fromRGB(255, 255, 255), Enum.Material.SmoothPlastic, Enum.PartType.Cylinder)
-		hat.CFrame = baseCFrame * CFrame.new(0, 4.1, 0) * CFrame.Angles(0, 0, math.rad(90))
-		makeModelPart(model, baseCFrame, "HatBand", Vector3.new(1.7, 0.2, 1.7), Vector3.new(0, 3.95, 0), Color3.fromRGB(255, 200, 40), Enum.Material.SmoothPlastic, Enum.PartType.Cylinder)
+		makeCylinderPart(model, baseCFrame, "HatBrim", 0.14, 2.2, Vector3.new(0, 1.06, 0), accent, s)
+		makeCylinderPart(model, baseCFrame, "HatTop", 0.45, 1.55, Vector3.new(0, 1.32, 0),
+			Color3.fromRGB(255, 255, 255), s)
 	elseif feature == "Bubblegum" then
-		-- A big pink bubble at the mouth.
-		makeModelPart(model, baseCFrame, "Bubble", Vector3.new(1.3, 1.3, 1.3), Vector3.new(1.3, 2.7, 0), accent, Enum.Material.Neon, Enum.PartType.Ball)
+		local bubble = P("Bubblegum", Vector3.new(1.15, 1.15, 1.15), Vector3.new(0, 0.05, -1.05),
+			accent, Enum.Material.SmoothPlastic, Enum.PartType.Ball)
+		bubble.Transparency = 0.25
 	elseif feature == "Toilet" then
-		-- A white throne to sit on, with a tank behind.
-		makeModelPart(model, baseCFrame, "ToiletSeat", Vector3.new(2.4, 0.9, 2.4), Vector3.new(0, 0.45, 0), accent, Enum.Material.SmoothPlastic)
-		makeModelPart(model, baseCFrame, "ToiletTank", Vector3.new(0.7, 1.8, 2.2), Vector3.new(-1.1, 1.6, 0), accent, Enum.Material.SmoothPlastic)
+		P("ToiletBowl", Vector3.new(1.9, 1.1, 1.0), Vector3.new(0, -0.35, 1.25), accent)
+		P("ToiletTank", Vector3.new(1.9, 1.3, 0.5), Vector3.new(0, 0.75, 1.5), accent)
 	elseif feature == "Crown" then
-		makeModelPart(model, baseCFrame, "CrownBase", Vector3.new(1.6, 0.5, 1.6), Vector3.new(0, 4.1, 0), Color3.fromRGB(255, 210, 60), Enum.Material.Neon)
-		for _, spikeZ in ipairs({ -0.6, 0, 0.6 }) do
-			makeModelPart(model, baseCFrame, "CrownSpike", Vector3.new(0.4, 0.8, 0.4), Vector3.new(0, 4.7, spikeZ), Color3.fromRGB(255, 210, 60), Enum.Material.Neon)
+		local gold = Color3.fromRGB(255, 200, 40)
+		P("CrownBand", Vector3.new(1.7, 0.5, 1.7), Vector3.new(0, 1.25, 0), gold, Enum.Material.Metal)
+		for _, dx in ipairs({ -0.65, 0.65 }) do
+			for _, dz in ipairs({ -0.65, 0.65 }) do
+				P("CrownPoint", Vector3.new(0.35, 0.5, 0.35), Vector3.new(dx, 1.7, dz), gold, Enum.Material.Metal)
+			end
 		end
 	elseif feature == "Glasses" then
-		makeModelPart(model, baseCFrame, "GlassesLeft", Vector3.new(0.15, 0.6, 0.7), Vector3.new(1, 3.3, -0.45), Color3.fromRGB(30, 30, 30), Enum.Material.SmoothPlastic)
-		makeModelPart(model, baseCFrame, "GlassesRight", Vector3.new(0.15, 0.6, 0.7), Vector3.new(1, 3.3, 0.45), Color3.fromRGB(30, 30, 30), Enum.Material.SmoothPlastic)
-		makeModelPart(model, baseCFrame, "GlassesBridge", Vector3.new(0.15, 0.15, 0.5), Vector3.new(1, 3.3, 0), Color3.fromRGB(30, 30, 30), Enum.Material.SmoothPlastic)
+		local frame = Color3.fromRGB(30, 30, 30)
+		P("GlassesL", Vector3.new(0.75, 0.75, 0.12), Vector3.new(-0.52, 0.3, -0.9), frame)
+		P("GlassesR", Vector3.new(0.75, 0.75, 0.12), Vector3.new(0.52, 0.3, -0.9), frame)
+		P("GlassesBridge", Vector3.new(0.35, 0.14, 0.12), Vector3.new(0, 0.38, -0.9), frame)
 	elseif feature == "Moon" then
-		-- A pale cheese moon floating over the head, with crater dots.
-		makeModelPart(model, baseCFrame, "MoonBall", Vector3.new(1.5, 1.5, 1.5), Vector3.new(0, 5, 0), body, Enum.Material.Neon, Enum.PartType.Ball)
-		makeModelPart(model, baseCFrame, "MoonCrater", Vector3.new(0.5, 0.5, 0.5), Vector3.new(0.6, 5.3, 0.3), accent, Enum.Material.SmoothPlastic, Enum.PartType.Ball)
+		P("Moon", Vector3.new(1.05, 1.05, 1.05), Vector3.new(0.95, 2.0, 0),
+			accent, Enum.Material.SmoothPlastic, Enum.PartType.Ball)
 	elseif feature == "Orb" then
-		-- A glowing quantum orb above the head.
-		local orb = makeModelPart(model, baseCFrame, "QuantumOrb", Vector3.new(1.1, 1.1, 1.1), Vector3.new(0, 5, 0), accent, Enum.Material.Neon, Enum.PartType.Ball)
-		orb.Transparency = 0.2
+		P("Orb", Vector3.new(0.95, 0.95, 0.95), Vector3.new(0, 2.05, 0),
+			accent, Enum.Material.Neon, Enum.PartType.Ball)
 	elseif feature == "Bagel" then
-		-- A bagel worn like a hat: a flat ring with a dark hole.
-		local bagel = makeModelPart(model, baseCFrame, "BagelRing", Vector3.new(0.6, 2.4, 2.4), Vector3.new(0, 4.2, 0), body, Enum.Material.SmoothPlastic, Enum.PartType.Cylinder)
-		bagel.CFrame = baseCFrame * CFrame.new(0, 4.2, 0) * CFrame.Angles(0, 0, math.rad(90))
-		local hole = makeModelPart(model, baseCFrame, "BagelHole", Vector3.new(0.7, 1, 1), Vector3.new(0, 4.2, 0), accent, Enum.Material.SmoothPlastic, Enum.PartType.Cylinder)
-		hole.CFrame = baseCFrame * CFrame.new(0, 4.2, 0) * CFrame.Angles(0, 0, math.rad(90))
+		makeCylinderPart(model, baseCFrame, "BagelRing", 0.55, 1.7, Vector3.new(0, 1.55, 0),
+			Color3.fromRGB(215, 170, 100), s)
+		makeCylinderPart(model, baseCFrame, "BagelHole", 0.62, 0.8, Vector3.new(0, 1.55, 0), accent, s)
 	elseif feature == "Waffle" then
-		-- A waffle slab worn like a hat, with syrup drips.
-		makeModelPart(model, baseCFrame, "WaffleSlab", Vector3.new(2.2, 0.4, 2.2), Vector3.new(0, 4.2, 0), body, Enum.Material.SmoothPlastic)
-		makeModelPart(model, baseCFrame, "SyrupDrip", Vector3.new(0.5, 1, 0.5), Vector3.new(0.8, 3.8, 0.8), accent, Enum.Material.SmoothPlastic)
+		P("Waffle", Vector3.new(1.7, 1.7, 0.3), Vector3.new(0, 0.15, -1.0), accent)
+		local grid = accent:Lerp(Color3.fromRGB(0, 0, 0), 0.25)
+		P("WaffleGridH", Vector3.new(1.7, 0.12, 0.34), Vector3.new(0, 0.15, -1.02), grid)
+		P("WaffleGridV", Vector3.new(0.12, 1.7, 0.34), Vector3.new(0, 0.15, -1.02), grid)
 	end
 end
 
--- Builds a blocky creature model for one character. The model faces +X,
--- stands on the ground at the given position, and carries a floating
--- label with its name, rarity and income. showCost adds a cost line.
--- scaleOverride shrinks or grows this one model (bases use 1.9).
-function BrainrotSpawner.BuildBrainrotModel(character, mutationName, position, yaw, showCost, scaleOverride)
-	activeScale = scaleOverride or MODEL_SCALE
-	local model = Instance.new("Model")
-	model.Name = character.Name
-	local baseCFrame = CFrame.new(position) * CFrame.Angles(0, yaw or 0, 0)
-
-	-- Body and head in the character's colours.
-	local body = makeModelPart(model, baseCFrame, "Body", Vector3.new(2, 2, 2), Vector3.new(0, 1.4, 0), character.BodyColor, Enum.Material.SmoothPlastic)
-	model.PrimaryPart = body
-	makeModelPart(model, baseCFrame, "Head", Vector3.new(1.8, 1.5, 1.8), Vector3.new(0, 3.1, 0), character.BodyColor, Enum.Material.SmoothPlastic)
-
-	-- Eyes on the +X face of the head, so the creature looks where it walks.
-	for _, eyeZ in ipairs({ -0.45, 0.45 }) do
-		makeModelPart(model, baseCFrame, "Eye", Vector3.new(0.2, 0.5, 0.4), Vector3.new(0.95, 3.3, eyeZ), Color3.fromRGB(255, 255, 255), Enum.Material.SmoothPlastic)
-		makeModelPart(model, baseCFrame, "Pupil", Vector3.new(0.15, 0.25, 0.2), Vector3.new(1.1, 3.3, eyeZ), Color3.fromRGB(20, 20, 20), Enum.Material.SmoothPlastic)
-	end
-
-	-- Legs and arms.
-	for _, legZ in ipairs({ -0.55, 0.55 }) do
-		makeModelPart(model, baseCFrame, "Leg", Vector3.new(0.6, 0.8, 0.6), Vector3.new(0, 0.4, legZ), character.AccentColor, Enum.Material.SmoothPlastic)
-	end
-	for _, armZ in ipairs({ -1.25, 1.25 }) do
-		makeModelPart(model, baseCFrame, "Arm", Vector3.new(0.5, 1.2, 0.5), Vector3.new(0, 1.5, armZ), character.BodyColor, Enum.Material.SmoothPlastic)
-	end
-
-	addCharacterFeature(model, baseCFrame, character)
-
-	-- Mutation aura: a coloured disc under the creature.
-	if mutationName ~= "None" then
-		local aura = makeModelPart(
-			model,
-			baseCFrame,
-			"MutationAura",
-			Vector3.new(0.3, 3.6, 3.6),
-			Vector3.new(0, 0.15, 0),
-			BrainrotCatalog.GetMutationColor(mutationName),
-			Enum.Material.Neon,
-			Enum.PartType.Cylinder
-		)
-		aura.CFrame = baseCFrame * CFrame.new(0, 0.15, 0) * CFrame.Angles(0, 0, math.rad(90))
-		aura.Transparency = 0.3
-	end
-
-	-- Floating world label: name, rarity and money per second.
-	local rate = BrainrotCatalog.GetIncomePerSecond(character, mutationName)
-	local labelText = BrainrotCatalog.GetDisplayName(character, mutationName)
-		.. "\n" .. character.Rarity .. "  $" .. rate .. "/s"
-	if showCost then
-		labelText = labelText .. "\nCost: $" .. character.Cost
-	end
+local function buildNameLabel(body, character, mutationName, showCost, s)
 	local gui = Instance.new("BillboardGui")
-	gui.Name = "BrainrotLabel"
-	gui.Adornee = body
-	gui.Size = UDim2.fromOffset(280, 110)
-	gui.StudsOffsetWorldSpace = Vector3.new(0, 3.2 * activeScale, 0)
+	gui.Name = "NameLabel"
+	gui.Size = UDim2.fromOffset(220, 96)
+	gui.StudsOffset = Vector3.new(0, 1.0 * s + 1.4, 0)
 	gui.AlwaysOnTop = false
-	gui.MaxDistance = 150
-	gui.LightInfluence = 0
-	local label = Instance.new("TextLabel")
-	label.Name = "Text"
-	label.Size = UDim2.fromScale(1, 1)
-	label.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
-	label.BackgroundTransparency = 0.3
-	label.BorderSizePixel = 0
-	label.Text = labelText
-	label.TextColor3 = BrainrotCatalog.GetRarityColor(character.Rarity)
-	label.TextSize = 20
-	label.Font = Enum.Font.SourceSansBold
-	label.TextScaled = true
-	label.TextWrapped = true
-	label.Parent = gui
-	gui.Parent = model
+
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Vertical
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = gui
+
+	local function addLine(name, text, textSize, color, order)
+		local label = Instance.new("TextLabel")
+		label.Name = name
+		label.Size = UDim2.new(1, 0, 0, textSize + 6)
+		label.BackgroundTransparency = 1
+		label.Font = Enum.Font.GothamBold
+		label.Text = text
+		label.TextSize = textSize
+		label.TextColor3 = color
+		label.TextStrokeTransparency = 0.5
+		label.LayoutOrder = order
+		label.Parent = gui
+		return label
+	end
+
+	addLine("Name", BrainrotCatalog.GetDisplayName(character, mutationName), 18,
+		Color3.fromRGB(255, 255, 255), 1)
+	addLine("Rarity", character.Rarity, 14, BrainrotCatalog.GetRarityColor(character.Rarity), 2)
+	addLine("Rate", "$" .. BrainrotCatalog.GetIncomePerSecond(character, mutationName) .. "/s", 14,
+		Color3.fromRGB(140, 255, 150), 3)
+	if showCost then
+		addLine("Cost", "$" .. character.Cost, 14, Color3.fromRGB(255, 230, 120), 4)
+	end
+
+	gui.Parent = body
+end
+
+function BrainrotSpawner.BuildBrainrotModel(character, mutationName, position, yaw, showCost, scaleOverride)
+	local s = scaleOverride or MODEL_SCALE
+	local mutation = mutationName or "None"
+	local model = Instance.new("Model")
+	model.Name = character.Id
+
+	local baseCFrame = CFrame.new(position) * CFrame.Angles(0, yaw or 0, 0)
+	local function P(name, size, offset, color, material, shape)
+		return makeModelPart(model, baseCFrame, name, size * s, offset * s, color, material, shape)
+	end
+
+	local bodyColor = character.BodyColor
+	if mutation ~= "None" then
+		bodyColor = BrainrotCatalog.GetMutationColor(mutation)
+	end
+
+	local body = P("Body", Vector3.new(2.4, 2.0, 1.7), Vector3.new(0, 0, 0), bodyColor)
+	P("FootL", Vector3.new(0.8, 0.35, 1.1), Vector3.new(-0.6, -1.12, 0), character.AccentColor)
+	P("FootR", Vector3.new(0.8, 0.35, 1.1), Vector3.new(0.6, -1.12, 0), character.AccentColor)
+	local eyeColor = Color3.fromRGB(20, 20, 25)
+	P("EyeL", Vector3.new(0.4, 0.5, 0.12), Vector3.new(-0.5, 0.3, -0.88), eyeColor)
+	P("EyeR", Vector3.new(0.4, 0.5, 0.12), Vector3.new(0.5, 0.3, -0.88), eyeColor)
+	P("Mouth", Vector3.new(0.7, 0.15, 0.1), Vector3.new(0, -0.28, -0.88), eyeColor)
+
+	addCharacterFeature(model, baseCFrame, character, s)
+
+	model.PrimaryPart = body
+	buildNameLabel(body, character, mutation, showCost, s)
+
+	if showCost then
+		local detector = Instance.new("ClickDetector")
+		detector.Parent = body
+		detector.MouseClick:Connect(function(clickingPlayer)
+			if BrainrotSpawner.ClickedCallback then
+				BrainrotSpawner.ClickedCallback(clickingPlayer, model:GetAttribute("BeltId"))
+			end
+		end)
+	end
+
+	if mutation == "Rainbow" then
+		task.spawn(function()
+			while model.Parent do
+				body.Color = Color3.fromHSV((os.clock() % 3) / 3, 0.65, 1)
+				task.wait(0.1)
+			end
+		end)
+	end
 
 	model.Parent = Workspace
 	return model
 end
 
--- Rolls a new brainrot and puts it on the belt at the west end.
-function BrainrotSpawner.SpawnBrainrotOnConveyor()
-	if #beltBrainrots >= BrainrotCatalog.MaxBeltBrainrots then
-		return nil
-	end
-	local rarity = BrainrotCatalog.RollRarity()
-	local character = BrainrotCatalog.PickRandomCharacterOfRarity(rarity)
-	local mutation = BrainrotCatalog.RollMutation()
-	local beltId = nextBeltId
-	nextBeltId = nextBeltId + 1
+-- The conveyor belt -----------------------------------------------------------------
 
-	local startPosition = Vector3.new(BrainrotCatalog.BeltStartX, BrainrotCatalog.BeltTopY, 0)
-	local model = BrainrotSpawner.BuildBrainrotModel(character, mutation, startPosition, 0, true)
-	model:SetAttribute("BeltId", beltId)
-
-	local clicker = Instance.new("ClickDetector")
-	clicker.Name = "BuyClick"
-	clicker.MaxActivationDistance = 32
-	clicker.MouseClick:Connect(function(player)
-		if BrainrotSpawner.ClickedCallback then
-			BrainrotSpawner.ClickedCallback(player, beltId)
+local function findBeltEntry(beltId)
+	for index, entry in ipairs(beltEntries) do
+		if entry.Id == beltId then
+			return entry, index
 		end
-	end)
-	clicker.Parent = model.PrimaryPart
+	end
+	return nil, nil
+end
 
+function BrainrotSpawner.SpawnBrainrotOnConveyor()
+	if #beltEntries >= BrainrotCatalog.MaxBeltBrainrots then
+		return
+	end
+	local rarityName = BrainrotCatalog.RollRarity()
+	local character = BrainrotCatalog.PickRandomCharacterOfRarity(rarityName)
+	local mutationName = BrainrotCatalog.RollMutation()
+
+	nextBeltId += 1
 	local entry = {
-		Id = beltId,
-		Character = character,
-		Mutation = mutation,
-		Cost = character.Cost,
-		Rate = BrainrotCatalog.GetIncomePerSecond(character, mutation),
-		Model = model,
-		PositionX = BrainrotCatalog.BeltStartX,
+		Id = nextBeltId,
+		CharacterId = character.Id,
+		Mutation = mutationName,
+		Model = nil,
+		X = BrainrotCatalog.BeltStartX,
+		AnchorY = BrainrotCatalog.BeltTopY + 2,
 	}
-	table.insert(beltBrainrots, entry)
-	return entry
+	local model = BrainrotSpawner.BuildBrainrotModel(
+		character,
+		mutationName,
+		Vector3.new(entry.X, entry.AnchorY, 0),
+		BELT_YAW,
+		true
+	)
+	model:SetAttribute("BeltId", entry.Id)
+	if beltFolder then
+		model.Parent = beltFolder
+	end
+	entry.Model = model
+	table.insert(beltEntries, entry)
 end
 
 function BrainrotSpawner.GetBeltBrainrotById(beltId)
-	for _, entry in ipairs(beltBrainrots) do
-		if entry.Id == beltId then
-			return entry
-		end
-	end
-	return nil
+	local entry = findBeltEntry(beltId)
+	return entry
 end
 
--- Removes one belt brainrot (bought, or washed away) and destroys its model.
 function BrainrotSpawner.RemoveBeltBrainrot(beltId)
-	for index, entry in ipairs(beltBrainrots) do
-		if entry.Id == beltId then
-			table.remove(beltBrainrots, index)
-			if entry.Model then
-				entry.Model:Destroy()
-			end
-			return entry
-		end
+	local entry, index = findBeltEntry(beltId)
+	if not entry then
+		return
 	end
-	return nil
+	if entry.Model then
+		entry.Model:Destroy()
+	end
+	table.remove(beltEntries, index)
 end
 
--- Washes every brainrot still riding the belt away (tsunami).
 function BrainrotSpawner.ClearAllBeltBrainrots()
-	for _, entry in ipairs(beltBrainrots) do
+	for _, entry in ipairs(beltEntries) do
 		if entry.Model then
 			entry.Model:Destroy()
 		end
 	end
-	beltBrainrots = {}
+	beltEntries = {}
 end
 
--- Small summaries for the client's conveyor cards.
 function BrainrotSpawner.GetBeltBrainrotsForClient()
-	local summaries = {}
-	for _, entry in ipairs(beltBrainrots) do
-		table.insert(summaries, {
-			Id = entry.Id,
-			CharacterId = entry.Character.Id,
-			Name = BrainrotCatalog.GetDisplayName(entry.Character, entry.Mutation),
-			Rarity = entry.Character.Rarity,
-			Cost = entry.Cost,
-			Rate = entry.Rate,
-			Mutation = entry.Mutation,
-		})
-	end
-	return summaries
-end
-
--- Slides every belt brainrot along the belt; despawns any that reach the end.
-local function moveBeltBrainrotsAlongBelt(deltaTime)
-	local step = BrainrotCatalog.BeltSpeedStudsPerSecond * deltaTime
-	for index = #beltBrainrots, 1, -1 do
-		local entry = beltBrainrots[index]
-		entry.PositionX = entry.PositionX + step
-		if entry.PositionX >= BrainrotCatalog.BeltEndX then
-			table.remove(beltBrainrots, index)
-			if entry.Model then
-				entry.Model:Destroy()
-			end
-		elseif entry.Model then
-			-- Shift the model sideways by this tick's step only, keeping
-			-- the height it was built at. An absolute PivotTo down to the
-			-- belt's top Y would sink the model into the belt, because
-			-- the model pivot sits at its body centre, not at its feet.
-			local pivot = entry.Model:GetPivot()
-			entry.Model:PivotTo(pivot + Vector3.new(step, 0, 0))
+	local out = {}
+	for _, entry in ipairs(beltEntries) do
+		local character = BrainrotCatalog.GetCharacterById(entry.CharacterId)
+		if character then
+			table.insert(out, {
+				Id = entry.Id,
+				CharacterId = entry.CharacterId,
+				Name = BrainrotCatalog.GetDisplayName(character, entry.Mutation),
+				Rarity = character.Rarity,
+				Rate = BrainrotCatalog.GetIncomePerSecond(character, entry.Mutation),
+				Cost = character.Cost,
+				Mutation = entry.Mutation,
+			})
 		end
 	end
+	return out
 end
 
 function BrainrotSpawner.Init(worldMap)
-	map = worldMap
-	math.randomseed(os.time())
-	RunService.Heartbeat:Connect(moveBeltBrainrotsAlongBelt)
+	beltFolder = Instance.new("Folder")
+	beltFolder.Name = "Belt"
+	beltFolder.Parent = Workspace
+
+	-- Slide every belt brainrot toward the far end; remove the ones that
+	-- reach it unpurchased.
+	RunService.Heartbeat:Connect(function(deltaTime)
+		for index = #beltEntries, 1, -1 do
+			local entry = beltEntries[index]
+			entry.X += BrainrotCatalog.BeltSpeedStudsPerSecond * deltaTime
+			if entry.X > BrainrotCatalog.BeltEndX then
+				if entry.Model then
+					entry.Model:Destroy()
+				end
+				table.remove(beltEntries, index)
+			elseif entry.Model then
+				entry.Model:PivotTo(
+					CFrame.new(entry.X, entry.AnchorY, 0) * CFrame.Angles(0, BELT_YAW, 0)
+				)
+			end
+		end
+	end)
+
 	task.spawn(function()
+		BrainrotSpawner.SpawnBrainrotOnConveyor()
 		while true do
 			task.wait(BrainrotCatalog.SpawnIntervalSeconds)
 			BrainrotSpawner.SpawnBrainrotOnConveyor()

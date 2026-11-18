@@ -1,354 +1,325 @@
 -- ClientMain.client.luau
--- The whole interface of Brainrot Bazaar, built from code as one ScreenGui
--- over the 3D world: cash and income at the top centre, the wave banner
--- under it, conveyor cards at the bottom centre, the player's base panel
--- on the right, and the Lock and Rebirth buttons at the bottom right.
--- All text stays clear of the top-left corner, where Roblox puts its own
--- menu buttons. The client only asks; the server decides every number.
+-- The Brainrot Bazaar HUD, built entirely in code: a top bar with cash,
+-- income and rebirths; the belt panel on the left for buying; the base panel
+-- on the right for selling, slots, locking and rebirthing; plus the banner
+-- and toast lines for wave warnings and feedback. The client renders only
+-- what the server's state snapshots say — it never changes game state
+-- itself, it just fires the request remotes.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local BrainrotCatalog = require(ReplicatedStorage:WaitForChild("BrainrotCatalog"))
-
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
+
+local BrainrotCatalog = require(ReplicatedStorage:WaitForChild("BrainrotCatalog"))
 
 local remotesFolder = ReplicatedStorage:WaitForChild("Remotes")
 local remotes = {}
 for _, remoteName in ipairs({
-	"RequestBuy",
-	"RequestSell",
-	"RequestBuySlot",
-	"RequestLock",
-	"RequestRebirth",
-	"RequestSteal",
-	"StateUpdate",
-	"ShowBanner",
-	"ShowMessage",
+	"RequestBuy", "RequestSell", "RequestBuySlot", "RequestLock", "RequestRebirth",
+	"RequestSteal", "StateUpdate", "ShowBanner", "ShowMessage",
 }) do
 	remotes[remoteName] = remotesFolder:WaitForChild(remoteName)
 end
 
--- ---------------------------------------------------------------------------
--- Small helpers
--- ---------------------------------------------------------------------------
+-- Small builders ---------------------------------------------------------------------
 
 local function formatMoney(amount)
-	local text = tostring(math.floor(amount))
-	local result = ""
-	while #text > 3 do
-		result = "," .. string.sub(text, -3) .. result
-		text = string.sub(text, 1, -4)
+	local value = math.floor(amount or 0)
+	local digits = tostring(value)
+	local grouped = digits:reverse():gsub("(%d%d%d)", "%1,"):reverse()
+	if grouped:sub(1, 1) == "," then
+		grouped = grouped:sub(2)
 	end
-	return text .. result
+	return "$" .. grouped
 end
 
-local function makeFrame(parent, name, size, position, anchorPoint, color, transparency)
+local function makeFrame(parent, name, size, position)
 	local frame = Instance.new("Frame")
 	frame.Name = name
 	frame.Size = size
 	frame.Position = position
-	frame.AnchorPoint = anchorPoint or Vector2.new(0, 0)
-	frame.BackgroundColor3 = color
-	frame.BackgroundTransparency = transparency or 0
+	frame.BackgroundColor3 = Color3.fromRGB(25, 25, 38)
+	frame.BackgroundTransparency = 0.12
 	frame.BorderSizePixel = 0
 	frame.Parent = parent
 	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 10)
+	corner.CornerRadius = UDim.new(0, 8)
 	corner.Parent = frame
 	return frame
 end
 
-local function makeLabel(parent, name, size, position, text, textSize, textColor, backgroundTransparency)
+local function makeLabel(parent, name, size, position, text, textSize, textColor)
 	local label = Instance.new("TextLabel")
 	label.Name = name
 	label.Size = size
 	label.Position = position
-	label.BackgroundTransparency = backgroundTransparency == nil and 1 or backgroundTransparency
+	label.BackgroundTransparency = 1
+	label.BorderSizePixel = 0
+	label.Font = Enum.Font.GothamBold
 	label.Text = text
 	label.TextSize = textSize
 	label.TextColor3 = textColor
-	label.Font = Enum.Font.SourceSansBold
-	label.TextScaled = false
-	label.TextWrapped = true
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.TextYAlignment = Enum.TextYAlignment.Center
 	label.Parent = parent
 	return label
 end
 
-local function makeButton(parent, name, size, position, text, textSize, color)
+local function makeButton(parent, name, size, position, text)
 	local button = Instance.new("TextButton")
 	button.Name = name
 	button.Size = size
 	button.Position = position
-	button.BackgroundColor3 = color
+	button.BackgroundColor3 = Color3.fromRGB(55, 150, 85)
 	button.BorderSizePixel = 0
+	button.Font = Enum.Font.GothamBold
 	button.Text = text
-	button.TextSize = textSize
+	button.TextSize = 15
 	button.TextColor3 = Color3.fromRGB(255, 255, 255)
-	button.Font = Enum.Font.SourceSansBold
-	button.TextWrapped = true
+	button.AutoButtonColor = true
 	button.Parent = parent
 	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 10)
+	corner.CornerRadius = UDim.new(0, 8)
 	corner.Parent = button
 	return button
 end
 
--- ---------------------------------------------------------------------------
--- The ScreenGui and its panels
--- ---------------------------------------------------------------------------
+local function makeListContainer(parent, name, size, position)
+	local container = Instance.new("Frame")
+	container.Name = name
+	container.Size = size
+	container.Position = position
+	container.BackgroundTransparency = 1
+	container.BorderSizePixel = 0
+	container.Parent = parent
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Vertical
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Padding = UDim.new(0, 6)
+	layout.Parent = container
+	return container
+end
+
+local function clearList(container)
+	for _, child in ipairs(container:GetChildren()) do
+		if not child:IsA("UIListLayout") then
+			child:Destroy()
+		end
+	end
+end
+
+-- HUD construction ---------------------------------------------------------------------
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "BrainrotBazaarGui"
 gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = false
 gui.Parent = playerGui
 
--- Top centre: cash and income, large enough to read at a glance.
-local topBar = makeFrame(gui, "TopBar", UDim2.new(0, 430, 0, 78), UDim2.new(0.5, 0, 0, 10), Vector2.new(0.5, 0), Color3.fromRGB(25, 25, 40), 0.15)
-local cashLabel = makeLabel(topBar, "CashLabel", UDim2.new(1, 0, 0, 40), UDim2.new(0, 0, 0, 4), "$100", 32, Color3.fromRGB(255, 220, 80), 1)
-local incomeLabel = makeLabel(topBar, "IncomeLabel", UDim2.new(1, 0, 0, 28), UDim2.new(0, 0, 0, 44), "+$0/s", 20, Color3.fromRGB(140, 230, 140), 1)
+-- The top bar starts at x = 0.12 of the screen so it clears Roblox's own
+-- menu buttons in the top-left corner.
+local topBar = makeFrame(gui, "TopBar", UDim2.new(0, 540, 0, 46), UDim2.new(0.12, 0, 0, 8))
+local cashLabel = makeLabel(topBar, "Cash", UDim2.new(0, 180, 1, 0), UDim2.new(0, 12, 0, 0),
+	"$500", 20, Color3.fromRGB(140, 255, 150))
+local incomeLabel = makeLabel(topBar, "Income", UDim2.new(0, 160, 1, 0), UDim2.new(0, 196, 0, 0),
+	"$0/s", 18, Color3.fromRGB(255, 230, 120))
+local rebirthLabel = makeLabel(topBar, "Rebirths", UDim2.new(0, 168, 1, 0), UDim2.new(0, 360, 0, 0),
+	"Rebirths: 0", 16, Color3.fromRGB(200, 170, 255))
 
--- Wave warning banner, just under the top bar. Hidden until an event comes.
-local waveBanner = makeFrame(gui, "WaveBanner", UDim2.new(0, 500, 0, 48), UDim2.new(0.5, 0, 0, 98), Vector2.new(0.5, 0), Color3.fromRGB(200, 40, 40), 0.1)
-waveBanner.Visible = false
-local waveLabel = makeLabel(waveBanner, "WaveLabel", UDim2.new(1, -16, 1, -8), UDim2.new(0, 8, 0, 4), "", 24, Color3.fromRGB(255, 255, 255), 1)
+local taskLabel = makeLabel(gui, "Task", UDim2.new(0, 540, 0, 26), UDim2.new(0.12, 0, 0, 58),
+	"Welcome to the bazaar!", 15, Color3.fromRGB(255, 240, 170))
+taskLabel.BackgroundTransparency = 0.35
+taskLabel.BackgroundColor3 = Color3.fromRGB(25, 25, 38)
+taskLabel.TextXAlignment = Enum.TextXAlignment.Center
 
--- Task bar under the banner: always shows the player's next goal, the
--- way the genre's hit games coach a new player from buy to base to
--- rebirth without ever leaving them wondering what to do.
-local taskBar = makeFrame(gui, "TaskBar", UDim2.new(0, 560, 0, 40), UDim2.new(0.5, 0, 0, 152), Vector2.new(0.5, 0), Color3.fromRGB(25, 25, 40), 0.15)
-local taskLabel = makeLabel(taskBar, "TaskLabel", UDim2.new(1, -16, 1, -6), UDim2.new(0, 8, 0, 3), "TASK: Buy a Brainrot from the conveyor belt!", 19, Color3.fromRGB(255, 220, 80), 1)
+local beltPanel = makeFrame(gui, "BeltPanel", UDim2.new(0, 252, 0, 348), UDim2.new(0, 10, 0, 66))
+makeLabel(beltPanel, "Title", UDim2.new(1, -12, 0, 26), UDim2.new(0, 8, 0, 4),
+	"ON THE BELT", 17, Color3.fromRGB(255, 255, 255))
+local beltList = makeListContainer(beltPanel, "BeltList",
+	UDim2.new(0, 240, 1, -40), UDim2.new(0, 6, 0, 34))
 
--- Feedback messages in the middle of the screen.
-local messageLabel = makeLabel(gui, "MessageLabel", UDim2.new(0, 600, 0, 44), UDim2.new(0.5, 0, 0.42, 0), "", 26, Color3.fromRGB(255, 255, 255), 0.3)
-messageLabel.AnchorPoint = Vector2.new(0.5, 0)
-messageLabel.BackgroundColor3 = Color3.fromRGB(25, 25, 40)
-messageLabel.Visible = false
+local basePanel = makeFrame(gui, "BasePanel", UDim2.new(0, 252, 0, 348), UDim2.new(1, -262, 0, 66))
+makeLabel(basePanel, "Title", UDim2.new(1, -12, 0, 26), UDim2.new(0, 8, 0, 4),
+	"YOUR BASE", 17, Color3.fromRGB(255, 255, 255))
+local baseList = makeListContainer(basePanel, "BaseList",
+	UDim2.new(0, 240, 0, 176), UDim2.new(0, 6, 0, 34))
+local buySlotButton = makeButton(basePanel, "BuySlot", UDim2.new(0, 240, 0, 34), UDim2.new(0, 6, 0, 218),
+	"Buy slot")
+local lockButton = makeButton(basePanel, "Lock", UDim2.new(0, 240, 0, 34), UDim2.new(0, 6, 0, 258),
+	"Lock base (45s)")
+lockButton.BackgroundColor3 = Color3.fromRGB(70, 110, 190)
+local rebirthButton = makeButton(basePanel, "Rebirth", UDim2.new(0, 240, 0, 34), UDim2.new(0, 6, 0, 298),
+	"Rebirth")
+rebirthButton.BackgroundColor3 = Color3.fromRGB(150, 80, 200)
 
--- Bottom centre: cards for the brainrots currently riding the conveyor.
-local beltFrame = Instance.new("Frame")
-beltFrame.Name = "BeltFrame"
-beltFrame.AnchorPoint = Vector2.new(0.5, 1)
-beltFrame.Position = UDim2.new(0.5, 0, 1, -10)
-beltFrame.Size = UDim2.new(0, 800, 0, 116)
-beltFrame.BackgroundTransparency = 1
-beltFrame.BorderSizePixel = 0
-beltFrame.Parent = gui
-local beltLayout = Instance.new("UIListLayout")
-beltLayout.FillDirection = Enum.FillDirection.Horizontal
-beltLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-beltLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-beltLayout.Padding = UDim.new(0, 8)
-beltLayout.Parent = beltFrame
-local beltTitle = makeLabel(gui, "BeltTitle", UDim2.new(0, 400, 0, 26), UDim2.new(0.5, 0, 1, -152), "ON THE CONVEYOR — CLICK A CARD TO BUY", 18, Color3.fromRGB(255, 255, 255), 0.4)
-beltTitle.AnchorPoint = Vector2.new(0.5, 0)
-beltTitle.BackgroundColor3 = Color3.fromRGB(25, 25, 40)
+local bannerLabel = makeLabel(gui, "Banner", UDim2.new(0, 700, 0, 64), UDim2.new(0.5, -350, 0.14, 0),
+	"", 44, Color3.fromRGB(255, 90, 90))
+bannerLabel.TextXAlignment = Enum.TextXAlignment.Center
+bannerLabel.Visible = false
 
--- Right side: the player's base panel, with a sell button per brainrot.
-local basePanel = makeFrame(gui, "BasePanel", UDim2.new(0, 290, 0, 420), UDim2.new(1, -12, 0.5, 0), Vector2.new(1, 0.5), Color3.fromRGB(25, 25, 40), 0.15)
-local baseTitle = makeLabel(basePanel, "BaseTitle", UDim2.new(1, -16, 0, 32), UDim2.new(0, 8, 0, 8), "YOUR BASE", 22, Color3.fromRGB(255, 220, 80), 1)
-local baseList = Instance.new("ScrollingFrame")
-baseList.Name = "BaseList"
-baseList.Size = UDim2.new(1, -16, 1, -96)
-baseList.Position = UDim2.new(0, 8, 0, 44)
-baseList.BackgroundTransparency = 1
-baseList.BorderSizePixel = 0
-baseList.ScrollBarThickness = 4
-baseList.AutomaticCanvasSize = Enum.AutomaticSize.Y
-baseList.CanvasSize = UDim2.new(0, 0, 0, 0)
-baseList.Parent = basePanel
-local baseListLayout = Instance.new("UIListLayout")
-baseListLayout.Padding = UDim.new(0, 6)
-baseListLayout.Parent = baseList
-local buySlotButton = makeButton(basePanel, "BuySlotButton", UDim2.new(1, -16, 0, 40), UDim2.new(0, 8, 1, -48), "Buy Slot", 18, Color3.fromRGB(60, 140, 220))
+local toastLabel = makeLabel(gui, "Toast", UDim2.new(0, 500, 0, 34), UDim2.new(0.5, -250, 0.14, 70),
+	"", 18, Color3.fromRGB(255, 255, 255))
+toastLabel.TextXAlignment = Enum.TextXAlignment.Center
+toastLabel.BackgroundTransparency = 0.35
+toastLabel.BackgroundColor3 = Color3.fromRGB(25, 25, 38)
+toastLabel.Visible = false
 
--- Bottom right: Lock Base and Rebirth.
-local actionFrame = Instance.new("Frame")
-actionFrame.Name = "ActionFrame"
-actionFrame.AnchorPoint = Vector2.new(1, 1)
-actionFrame.Position = UDim2.new(1, -12, 1, -136)
-actionFrame.Size = UDim2.new(0, 220, 0, 112)
-actionFrame.BackgroundTransparency = 1
-actionFrame.BorderSizePixel = 0
-actionFrame.Parent = gui
-local lockButton = makeButton(actionFrame, "LockButton", UDim2.new(1, 0, 0, 50), UDim2.new(0, 0, 0, 0), "Lock Base (45s)", 18, Color3.fromRGB(200, 80, 80))
-local rebirthButton = makeButton(actionFrame, "RebirthButton", UDim2.new(1, 0, 0, 50), UDim2.new(0, 0, 0, 62), "Rebirth", 18, Color3.fromRGB(150, 80, 220))
+-- Rendering ------------------------------------------------------------------------------
 
--- Left side, vertically centred: how to play, small and out of the way.
-local hintLabel = makeLabel(
-	gui,
-	"HintLabel",
-	UDim2.new(0, 250, 0, 110),
-	UDim2.new(0, 10, 0.5, 0),
-	"HOW TO PLAY\nBuy brainrots from the belt and\ncarry them home to your base.\nClick a rival's brainrot to steal it!\nLock your base to stop thieves.\nRun home when the wave comes!",
-	15,
-	Color3.fromRGB(230, 230, 230),
-	0.4
-)
-hintLabel.AnchorPoint = Vector2.new(0, 0.5)
-hintLabel.BackgroundColor3 = Color3.fromRGB(25, 25, 40)
-hintLabel.TextXAlignment = Enum.TextXAlignment.Left
+local currentState = nil
+local lastBeltSignature = nil
 
--- ---------------------------------------------------------------------------
--- Rendering the state the server sends every second
--- ---------------------------------------------------------------------------
-
-local function renderBeltCards(belt)
-	for _, child in ipairs(beltFrame:GetChildren()) do
-		if child:IsA("TextButton") then
-			child:Destroy()
-		end
+local function renderBelt(state)
+	clearList(beltList)
+	-- Show the most valuable riders first so the best buys are always on top.
+	local sorted = {}
+	for _, entry in ipairs(state.Belt) do
+		table.insert(sorted, entry)
 	end
-	for _, entry in ipairs(belt) do
-		local card = makeButton(
-			beltFrame,
-			"BeltCard" .. entry.Id,
-			UDim2.new(0, 124, 0, 106),
-			UDim2.new(0, 0, 0, 0),
-			entry.Name .. "\n" .. entry.Rarity .. "\n$" .. formatMoney(entry.Cost) .. "\n$" .. formatMoney(entry.Rate) .. "/s",
-			15,
-			BrainrotCatalog.GetRarityColor(entry.Rarity)
-		)
-		card.TextColor3 = Color3.fromRGB(255, 255, 255)
-		local beltId = entry.Id
+	table.sort(sorted, function(a, b)
+		return a.Rate > b.Rate
+	end)
+	for index, entry in ipairs(sorted) do
+		local card = makeButton(beltList, "BeltCard" .. entry.Id,
+			UDim2.new(1, 0, 0, 54), UDim2.new(0, 0, 0, 0), "")
+		card.BackgroundColor3 = Color3.fromRGB(42, 42, 58)
+		card.LayoutOrder = index
+		makeLabel(card, "Name", UDim2.new(1, -12, 0, 20), UDim2.new(0, 7, 0, 3),
+			entry.Name, 15, Color3.fromRGB(255, 255, 255))
+		makeLabel(card, "Rarity", UDim2.new(0, 90, 0, 16), UDim2.new(0, 7, 0, 24),
+			entry.Rarity, 12, BrainrotCatalog.GetRarityColor(entry.Rarity))
+		makeLabel(card, "Info", UDim2.new(1, -104, 0, 16), UDim2.new(0, 97, 0, 24),
+			formatMoney(entry.Rate) .. "/s   " .. formatMoney(entry.Cost), 12,
+			Color3.fromRGB(200, 255, 205))
 		card.MouseButton1Click:Connect(function()
-			remotes.RequestBuy:FireServer(beltId)
+			remotes.RequestBuy:FireServer(entry.Id)
 		end)
 	end
 end
 
-local function renderBaseList(owned)
-	for _, child in ipairs(baseList:GetChildren()) do
-		if child:IsA("Frame") then
-			child:Destroy()
-		end
+local function renderBase(state)
+	clearList(baseList)
+	if #state.Owned == 0 then
+		local empty = makeLabel(baseList, "Empty", UDim2.new(1, 0, 0, 22), UDim2.new(0, 0, 0, 0),
+			"No brainrots yet — buy one!", 13, Color3.fromRGB(190, 190, 205))
+		empty.LayoutOrder = 1
+		return
 	end
-	for _, entry in ipairs(owned) do
-		local row = Instance.new("Frame")
-		row.Name = "BaseRow" .. entry.Slot
-		row.Size = UDim2.new(1, 0, 0, 46)
-		row.BackgroundColor3 = Color3.fromRGB(45, 45, 65)
-		row.BorderSizePixel = 0
-		row.Parent = baseList
-		local rowCorner = Instance.new("UICorner")
-		rowCorner.CornerRadius = UDim.new(0, 8)
-		rowCorner.Parent = row
-
-		local nameLabel = makeLabel(row, "NameLabel", UDim2.new(1, -96, 1, 0), UDim2.new(0, 8, 0, 0), entry.Name .. "\n$" .. formatMoney(entry.Rate) .. "/s", 15, BrainrotCatalog.GetRarityColor(entry.Rarity), 1)
-		nameLabel.TextXAlignment = Enum.TextXAlignment.Left
-
-		local refund = math.floor(entry.Cost * BrainrotCatalog.SellRefundFraction)
-		local sellButton = makeButton(row, "SellButton", UDim2.new(0, 84, 0, 32), UDim2.new(1, -92, 0, 7), "Sell $" .. formatMoney(refund), 14, Color3.fromRGB(200, 120, 40))
-		local slotIndex = entry.Slot
+	for index, entry in ipairs(state.Owned) do
+		local row = makeFrame(baseList, "OwnedRow" .. entry.Slot,
+			UDim2.new(1, 0, 0, 42), UDim2.new(0, 0, 0, 0))
+		row.BackgroundColor3 = Color3.fromRGB(42, 42, 58)
+		row.LayoutOrder = index
+		makeLabel(row, "Name", UDim2.new(1, -76, 0, 20), UDim2.new(0, 7, 0, 2),
+			entry.Name, 14, Color3.fromRGB(255, 255, 255))
+		makeLabel(row, "Info", UDim2.new(1, -76, 0, 16), UDim2.new(0, 7, 0, 23),
+			entry.Rarity .. "  " .. formatMoney(entry.Rate) .. "/s", 12,
+			BrainrotCatalog.GetRarityColor(entry.Rarity))
+		local sellButton = makeButton(row, "Sell", UDim2.new(0, 58, 0, 28), UDim2.new(1, -65, 0, 7),
+			"Sell")
+		sellButton.BackgroundColor3 = Color3.fromRGB(190, 90, 60)
+		sellButton.TextSize = 13
 		sellButton.MouseButton1Click:Connect(function()
-			remotes.RequestSell:FireServer(slotIndex)
+			remotes.RequestSell:FireServer(entry.Slot)
 		end)
 	end
 end
 
--- The next goal for the task bar, derived from the same snapshot the
--- rest of the HUD renders. Carrying always wins: a brainrot on your
--- head is the only job that matters until it is home.
 local function computeTaskText(state)
 	if state.Carrying then
-		if state.Carrying.Kind == "Steal" then
-			return "TASK: RUN! Take the stolen " .. state.Carrying.Name .. " to YOUR base!"
-		end
-		return "TASK: Carry " .. state.Carrying.Name .. " home to your base!"
+		return "Carry it home to your base!"
 	end
-	local ownedCount = #state.Owned
-	if ownedCount == 0 then
-		return "TASK: Buy your first Brainrot from the conveyor belt!"
-	end
-	if ownedCount < state.Slots then
-		if state.Cash >= 150 then
-			return "TASK: Buy more Brainrots — fill your base (" .. ownedCount .. "/" .. state.Slots .. ")!"
-		end
-		return "TASK: Your Brainrots are earning — buy another at $150!"
-	end
-	if state.NextSlotCost then
-		if state.Cash >= state.NextSlotCost then
-			return "TASK: Your base is full — buy another slot!"
-		end
-		return "TASK: Save up for another base slot — $" .. formatMoney(state.NextSlotCost) .. "!"
+	if #state.Owned == 0 then
+		return "Buy a brainrot from the belt!"
 	end
 	if state.TotalEarned >= state.RebirthThreshold then
-		return "TASK: REBIRTH for +25% income forever!"
+		return "Rebirth now for +25% income forever!"
 	end
-	return "TASK: Lock your base, steal from rivals, grow rich!"
+	if state.NextSlotCost and #state.Owned >= state.Slots and state.Cash >= state.NextSlotCost then
+		return "Your base is full — buy another slot!"
+	end
+	return "Earn " .. formatMoney(state.RebirthThreshold) .. " total to rebirth (+25% income)"
 end
 
 local function onStateUpdate(state)
-	taskLabel.Text = computeTaskText(state)
-	cashLabel.Text = "$" .. formatMoney(state.Cash)
-	local bonusPercent = math.floor((state.RebirthMultiplier - 1) * 100 + 0.5)
-	incomeLabel.Text = "+$" .. formatMoney(state.IncomePerSecond) .. "/s    Rebirths: " .. state.Rebirths .. " (+" .. bonusPercent .. "%)"
+	currentState = state
 
-	renderBeltCards(state.Belt)
-	renderBaseList(state.Owned)
+	cashLabel.Text = formatMoney(state.Cash)
+	incomeLabel.Text = formatMoney(state.IncomePerSecond) .. "/s"
+	rebirthLabel.Text = "Rebirths: " .. tostring(state.Rebirths)
+
+	-- The belt list is only rebuilt when the set of riders actually changes;
+	-- rebuilding it every second would eat the player's clicks.
+	local signatureParts = {}
+	for _, entry in ipairs(state.Belt) do
+		table.insert(signatureParts, tostring(entry.Id))
+	end
+	local signature = table.concat(signatureParts, ",")
+	if signature ~= lastBeltSignature then
+		lastBeltSignature = signature
+		renderBelt(state)
+	end
+
+	renderBase(state)
 
 	if state.NextSlotCost then
-		buySlotButton.Text = "Buy Slot — $" .. formatMoney(state.NextSlotCost) .. "  (" .. state.Slots .. "/10)"
+		buySlotButton.Visible = true
+		buySlotButton.Text = "Buy slot (" .. formatMoney(state.NextSlotCost) .. ")"
 	else
-		buySlotButton.Text = "Base Full  (" .. state.Slots .. "/10)"
+		buySlotButton.Visible = false
 	end
 
 	if state.Lock.Locked then
-		lockButton.Text = "LOCKED  " .. state.Lock.LockRemaining .. "s"
-		lockButton.BackgroundColor3 = Color3.fromRGB(90, 180, 90)
-	elseif state.Lock.CooldownRemaining > 0 then
-		lockButton.Text = "Lock Base (" .. state.Lock.CooldownRemaining .. "s)"
-		lockButton.BackgroundColor3 = Color3.fromRGB(120, 120, 120)
+		lockButton.Text = "Locked: " .. tostring(state.Lock.SecondsLeft) .. "s left"
+	elseif state.Lock.CooldownLeft > 0 then
+		lockButton.Text = "Lock (recharging " .. tostring(state.Lock.CooldownLeft) .. "s)"
 	else
-		lockButton.Text = "Lock Base (45s)"
-		lockButton.BackgroundColor3 = Color3.fromRGB(200, 80, 80)
+		lockButton.Text = "Lock base (45s)"
 	end
 
-	rebirthButton.Text = "Rebirth: $" .. formatMoney(state.TotalEarned) .. " / $" .. formatMoney(state.RebirthThreshold) .. "  (" .. state.Rebirths .. "x)"
+	rebirthButton.Text = "Rebirth (" .. formatMoney(state.TotalEarned)
+		.. " / " .. formatMoney(state.RebirthThreshold) .. ")"
+
+	taskLabel.Text = computeTaskText(state)
 end
 
-remotes.StateUpdate.OnClientEvent:Connect(onStateUpdate)
-
--- ---------------------------------------------------------------------------
--- Banners, messages and buttons
--- ---------------------------------------------------------------------------
-
-local bannerToken = 0
-remotes.ShowBanner.OnClientEvent:Connect(function(text, durationSeconds)
-	bannerToken = bannerToken + 1
-	local myToken = bannerToken
-	waveLabel.Text = text
-	waveBanner.Visible = true
-	task.delay(durationSeconds or 3, function()
-		if myToken == bannerToken then
-			waveBanner.Visible = false
-		end
-	end)
-end)
-
-local messageToken = 0
-remotes.ShowMessage.OnClientEvent:Connect(function(text)
-	messageToken = messageToken + 1
-	local myToken = messageToken
-	messageLabel.Text = text
-	messageLabel.Visible = true
-	task.delay(3, function()
-		if myToken == messageToken then
-			messageLabel.Visible = false
-		end
-	end)
-end)
+-- Remote wiring ----------------------------------------------------------------------------
 
 buySlotButton.MouseButton1Click:Connect(function()
 	remotes.RequestBuySlot:FireServer()
 end)
-
 lockButton.MouseButton1Click:Connect(function()
 	remotes.RequestLock:FireServer()
 end)
-
 rebirthButton.MouseButton1Click:Connect(function()
 	remotes.RequestRebirth:FireServer()
+end)
+
+remotes.StateUpdate.OnClientEvent:Connect(onStateUpdate)
+
+local bannerToken = 0
+remotes.ShowBanner.OnClientEvent:Connect(function(text)
+	bannerToken += 1
+	local token = bannerToken
+	bannerLabel.Text = text
+	bannerLabel.Visible = true
+	task.delay(3, function()
+		if bannerToken == token then
+			bannerLabel.Visible = false
+		end
+	end)
+end)
+
+local toastToken = 0
+remotes.ShowMessage.OnClientEvent:Connect(function(text)
+	toastToken += 1
+	local token = toastToken
+	toastLabel.Text = text
+	toastLabel.Visible = true
+	task.delay(2.5, function()
+		if toastToken == token then
+			toastLabel.Visible = false
+		end
+	end)
 end)
