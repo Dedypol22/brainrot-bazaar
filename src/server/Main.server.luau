@@ -1,3 +1,8 @@
+-- Main.server.luau — the server bootstrap for Brainrot Bazaar.
+-- Responsibilities: build the world map, create the shared RemoteEvents,
+-- initialise every server manager, connect buy/steal click callbacks, and
+-- own the player lifecycle (load, plot assignment, base rebuild, autosave).
+--
 -- Main.server.luau
 -- The single entry point of Brainrot Bazaar. It builds the world, creates
 -- the RemoteEvents the client talks through, wires the server modules

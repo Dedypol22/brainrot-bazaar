@@ -1,3 +1,6 @@
+// Entry point for handing in Brainrot Bazaar: copies the built place file
+// (game.rbxl), the sources under src/, the screenshots and PLAY.json into the
+// output directory, then writes the dossier.json summary the judge reads.
 // Brainrot Bazaar — a complete 3D Roblox brainrot game for make.fun's
 // roblox-brainrot-01 bounty (Node 22, standard library only). The game is
 // this directory's Rojo project: a circular market plaza with a wide
