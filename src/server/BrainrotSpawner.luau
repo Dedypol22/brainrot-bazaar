@@ -20,11 +20,17 @@ local beltBrainrots = {} -- array of { Id, Character, Mutation, Cost, Rate, Mode
 local nextBeltId = 1
 local map = nil
 
+-- Creatures are built larger than life on purpose: in the genre's hit
+-- games the brainrots tower over the belt so they read clearly from a
+-- distance. Every part size and offset in the model builder is scaled
+-- by this factor, so feet stay planted exactly on the belt or pad.
+local MODEL_SCALE = 1.7
+
 local function makeModelPart(model, baseCFrame, name, size, offset, color, material, shape)
 	local part = Instance.new("Part")
 	part.Name = name
-	part.Size = size
-	part.CFrame = baseCFrame * CFrame.new(offset)
+	part.Size = size * MODEL_SCALE
+	part.CFrame = baseCFrame * CFrame.new(offset * MODEL_SCALE)
 	part.Color = color
 	part.Material = material or Enum.Material.SmoothPlastic
 	part.Shape = shape or Enum.PartType.Block
@@ -149,8 +155,8 @@ function BrainrotSpawner.BuildBrainrotModel(character, mutationName, position, y
 	local gui = Instance.new("BillboardGui")
 	gui.Name = "BrainrotLabel"
 	gui.Adornee = body
-	gui.Size = UDim2.fromOffset(220, 90)
-	gui.StudsOffsetWorldSpace = Vector3.new(0, 3.2, 0)
+	gui.Size = UDim2.fromOffset(280, 110)
+	gui.StudsOffsetWorldSpace = Vector3.new(0, 3.2 * MODEL_SCALE, 0)
 	gui.AlwaysOnTop = false
 	gui.MaxDistance = 150
 	gui.LightInfluence = 0

@@ -226,10 +226,13 @@ local function buildBasePlot(plotIndex, angle)
 end
 
 local function buildSpawnArea()
+	-- Spawn sits just south of the plaza, facing the conveyor: in the
+	-- genre's hit games a joining player immediately sees the brainrots
+	-- walking the belt, so the action is the first thing on screen.
 	local spawn = Instance.new("SpawnLocation")
 	spawn.Name = "SpawnLocation"
 	spawn.Size = Vector3.new(14, 1, 14)
-	spawn.Position = Vector3.new(0, 0.5, 86)
+	spawn.CFrame = CFrame.lookAt(Vector3.new(0, 0.5, 54), Vector3.new(0, 0.5, 0))
 	spawn.Color = Color3.fromRGB(80, 200, 100)
 	spawn.Material = Enum.Material.Grass
 	spawn.Anchored = true
@@ -240,13 +243,13 @@ local function buildSpawnArea()
 	spawn.BottomSurface = Enum.SurfaceType.Smooth
 	spawn.Parent = Workspace
 
-	-- Welcome arch over the spawn: two poles and a board that says the name.
-	makePart("ArchPoleLeft", Vector3.new(1, 9, 1), Vector3.new(-8, 4.5, 78), Color3.fromRGB(255, 120, 60), Enum.Material.Wood)
-	makePart("ArchPoleRight", Vector3.new(1, 9, 1), Vector3.new(8, 4.5, 78), Color3.fromRGB(255, 120, 60), Enum.Material.Wood)
-	local archBoard = makePart("ArchBoard", Vector3.new(18, 3, 1), Vector3.new(0, 10, 78), Color3.fromRGB(255, 200, 40), Enum.Material.Wood)
+	-- Welcome arch over the way into the plaza: two poles and a board.
+	makePart("ArchPoleLeft", Vector3.new(1, 9, 1), Vector3.new(-8, 4.5, 46), Color3.fromRGB(255, 120, 60), Enum.Material.Wood)
+	makePart("ArchPoleRight", Vector3.new(1, 9, 1), Vector3.new(8, 4.5, 46), Color3.fromRGB(255, 120, 60), Enum.Material.Wood)
+	local archBoard = makePart("ArchBoard", Vector3.new(18, 3, 1), Vector3.new(0, 10, 46), Color3.fromRGB(255, 200, 40), Enum.Material.Wood)
 	makeBillboardLabel(archBoard, Vector2.new(420, 90), "BRAINROT BAZAAR", 36, Color3.fromRGB(120, 30, 30), Color3.fromRGB(255, 200, 40))
 
-	return Vector3.new(0, 3, 86)
+	return Vector3.new(0, 3, 54)
 end
 
 local function buildPalmTree(position)
