@@ -1,33 +1,32 @@
 -- PlayerData.luau
--- Owns per-player save data for Brainrot Bazaar: cash, lifetime earnings,
--- rebirths, bought slots and the brainrots standing on the player's base.
--- Persists through the "BrainrotBazaar_v1" DataStore when one is available;
--- in Studio (or whenever the store refuses) it quietly runs session-only.
+-- Per-player save data: cash, owned brainrots, the Prize Book index and
+-- rebirth progress, persisted through a DataStore when one is available.
 
 local DataStoreService = game:GetService("DataStoreService")
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local BrainrotCatalog = require(ReplicatedStorage:WaitForChild("BrainrotCatalog"))
 
 local PlayerData = {}
 
-local STORE_NAME = "BrainrotBazaar_v1"
-
 local store = nil
-local storeUnavailable = false
+local storeAvailable = false
+local warnedUnavailable = false
+
 do
 	local ok, result = pcall(function()
-		return DataStoreService:GetDataStore(STORE_NAME)
+		return DataStoreService:GetDataStore("BrainrotBazaar_v1")
 	end)
 	if ok and result then
 		store = result
+		storeAvailable = true
 	else
-		storeUnavailable = true
-		warn("[BrainrotBazaar] DataStore unavailable; progress will be session-only.")
+		warn("[BrainrotBazaar] DataStore unavailable; running session-only.")
+		warnedUnavailable = true
 	end
 end
 
--- Session copies, keyed by player.
 local sessions = {}
 local loadedFlags = {}
 
@@ -38,45 +37,24 @@ local function freshData()
 		Rebirths = 0,
 		SlotsBought = 0,
 		Owned = {},
+		Index = {},
+		IndexRewardsClaimed = 0,
+		LastStolenAt = 0,
 	}
 end
 
-local function looksValid(saved)
-	if type(saved) ~= "table" then
-		return false
-	end
-	if type(saved.Cash) ~= "number" or type(saved.TotalEarned) ~= "number" then
-		return false
-	end
-	if type(saved.Rebirths) ~= "number" or type(saved.SlotsBought) ~= "number" then
-		return false
-	end
-	if type(saved.Owned) ~= "table" then
-		return false
-	end
-	return true
-end
-
-local function sanitise(saved)
-	-- Rebuild the table from scratch so a hand-edited or stale save can never
-	-- smuggle in fields the game does not understand.
-	local data = freshData()
-	data.Cash = saved.Cash
-	data.TotalEarned = saved.TotalEarned
-	data.Rebirths = saved.Rebirths
-	data.SlotsBought = math.clamp(saved.SlotsBought, 0, BrainrotCatalog.MaxSlotCount - BrainrotCatalog.BaseSlotCount)
-	for _, entry in ipairs(saved.Owned) do
-		if type(entry) == "table"
-			and type(entry.CharacterId) == "string"
-			and BrainrotCatalog.GetCharacterById(entry.CharacterId)
-			and type(entry.Slot) == "number"
-		then
-			table.insert(data.Owned, {
-				CharacterId = entry.CharacterId,
-				Mutation = type(entry.Mutation) == "string" and entry.Mutation or "None",
-				Slot = entry.Slot,
-			})
+local function backfill(data)
+	local defaults = freshData()
+	for key, value in pairs(defaults) do
+		if data[key] == nil then
+			data[key] = value
 		end
+	end
+	if type(data.Owned) ~= "table" then
+		data.Owned = {}
+	end
+	if type(data.Index) ~= "table" then
+		data.Index = {}
 	end
 	return data
 end
@@ -88,28 +66,30 @@ local function buildLeaderstats(player, data)
 	end
 	local folder = Instance.new("Folder")
 	folder.Name = "leaderstats"
-	local cash = Instance.new("IntValue")
-	cash.Name = "Cash"
-	cash.Value = math.floor(data.Cash)
-	cash.Parent = folder
-	local rebirths = Instance.new("IntValue")
-	rebirths.Name = "Rebirths"
-	rebirths.Value = data.Rebirths
-	rebirths.Parent = folder
+	local cashValue = Instance.new("IntValue")
+	cashValue.Name = "Cash"
+	cashValue.Value = math.floor(data.Cash)
+	cashValue.Parent = folder
+	local rebirthValue = Instance.new("IntValue")
+	rebirthValue.Name = "Rebirths"
+	rebirthValue.Value = data.Rebirths
+	rebirthValue.Parent = folder
 	folder.Parent = player
 end
 
 function PlayerData.Load(player)
 	local data = freshData()
-	if store and not storeUnavailable then
+	if storeAvailable and store then
 		local ok, saved = pcall(function()
 			return store:GetAsync("player_" .. player.UserId)
 		end)
-		if ok and looksValid(saved) then
-			data = sanitise(saved)
-		elseif not ok then
-			warn("[BrainrotBazaar] Load failed for " .. player.Name .. "; starting fresh.")
+		if ok and type(saved) == "table" and type(saved.Cash) == "number" then
+			data = backfill(saved)
+		elseif not ok and not warnedUnavailable then
+			warn("[BrainrotBazaar] DataStore read failed; running session-only for this player.")
 		end
+	else
+		data = backfill(data)
 	end
 	sessions[player] = data
 	loadedFlags[player] = true
@@ -135,31 +115,28 @@ function PlayerData.Sync(player)
 		buildLeaderstats(player, data)
 		return
 	end
-	local cash = folder:FindFirstChild("Cash")
-	if cash then
-		cash.Value = math.floor(data.Cash)
+	local cashValue = folder:FindFirstChild("Cash")
+	if cashValue then
+		cashValue.Value = math.floor(data.Cash)
 	end
-	local rebirths = folder:FindFirstChild("Rebirths")
-	if rebirths then
-		rebirths.Value = data.Rebirths
+	local rebirthValue = folder:FindFirstChild("Rebirths")
+	if rebirthValue then
+		rebirthValue.Value = data.Rebirths
 	end
 end
 
 function PlayerData.Save(player)
 	local data = sessions[player]
-	if not data or not store or storeUnavailable then
+	if not data or not storeAvailable or not store then
 		return
 	end
-	local ok, err = pcall(function()
+	pcall(function()
 		store:SetAsync("player_" .. player.UserId, data)
 	end)
-	if not ok then
-		warn("[BrainrotBazaar] Save failed for " .. player.Name .. ": " .. tostring(err))
-	end
 end
 
 function PlayerData.SaveAllPlayers()
-	for player in pairs(sessions) do
+	for _, player in ipairs(Players:GetPlayers()) do
 		PlayerData.Save(player)
 	end
 end
@@ -178,6 +155,23 @@ function PlayerData.GetTotalSlots(player)
 	return BrainrotCatalog.BaseSlotCount + data.SlotsBought
 end
 
+function PlayerData.FindFreeSlot(player)
+	local data = sessions[player]
+	if not data then
+		return nil
+	end
+	local used = {}
+	for _, entry in ipairs(data.Owned) do
+		used[entry.Slot] = true
+	end
+	for slotIndex = 1, PlayerData.GetTotalSlots(player) do
+		if not used[slotIndex] then
+			return slotIndex
+		end
+	end
+	return nil
+end
+
 function PlayerData.GetOwnedAtSlot(player, slotIndex)
 	local data = sessions[player]
 	if not data then
@@ -186,20 +180,6 @@ function PlayerData.GetOwnedAtSlot(player, slotIndex)
 	for _, entry in ipairs(data.Owned) do
 		if entry.Slot == slotIndex then
 			return entry
-		end
-	end
-	return nil
-end
-
-function PlayerData.FindFreeSlot(player)
-	local data = sessions[player]
-	if not data then
-		return nil
-	end
-	local totalSlots = PlayerData.GetTotalSlots(player)
-	for slotIndex = 1, totalSlots do
-		if not PlayerData.GetOwnedAtSlot(player, slotIndex) then
-			return slotIndex
 		end
 	end
 	return nil
@@ -215,21 +195,23 @@ function PlayerData.AddOwnedBrainrot(player, characterId, mutationName, slotInde
 		Mutation = mutationName or "None",
 		Slot = slotIndex,
 	})
+	data.Index[characterId] = true
 	PlayerData.Sync(player)
 end
 
 function PlayerData.RemoveOwnedBrainrot(player, slotIndex)
 	local data = sessions[player]
 	if not data then
-		return
+		return nil
 	end
 	for index, entry in ipairs(data.Owned) do
 		if entry.Slot == slotIndex then
-			table.remove(data.Owned, index)
-			break
+			local removed = table.remove(data.Owned, index)
+			PlayerData.Sync(player)
+			return removed
 		end
 	end
-	PlayerData.Sync(player)
+	return nil
 end
 
 function PlayerData.ClearOwnedBrainrots(player)
@@ -239,6 +221,26 @@ function PlayerData.ClearOwnedBrainrots(player)
 	end
 	data.Owned = {}
 	PlayerData.Sync(player)
+end
+
+function PlayerData.GetIndexCount(player)
+	local data = sessions[player]
+	if not data then
+		return 0
+	end
+	local count = 0
+	for _ in pairs(data.Index) do
+		count += 1
+	end
+	return count
+end
+
+function PlayerData.HasInIndex(player, characterId)
+	local data = sessions[player]
+	if not data then
+		return false
+	end
+	return data.Index[characterId] == true
 end
 
 return PlayerData

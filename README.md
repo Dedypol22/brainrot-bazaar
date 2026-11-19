@@ -4,68 +4,27 @@
 
 # Brainrot Bazaar
 
-A complete 3D Roblox brainrot game for make.fun's "Make the best AI Roblox brainrot game" bounty
-(roblox-brainrot-01), built as a Rojo project. The player walks a circular market plaza, buys absurd
-original brainrot characters off a conveyor belt, keeps them on their own base plot where they earn
-cash every second, climbs a ladder of rarities, mutations and rebirths, and defends the catch from
-thieves and from a tsunami wave that sweeps the plaza every few minutes.
+A 3D Roblox brainrot tycoon built as a Rojo project. Brainrots ride a conveyor belt through the plaza; buy one, carry it home to your base, and it earns cash every second while it sits on its pad.
 
-## The loop
+**The roster:** 44 original brainrots across 7 rarities — Common, Rare, Epic, Legendary, Mythic, Secret and Divine — from Bananaphone Barry ($150) up to Chef of the Cosmos ($18,000,000). Six mutations can roll on any spawn: Golden (x2), Candy (x3), Diamond (x5), Rainbow (x10), Galaxy (x15) and Void (x25).
 
-- Brainrots ride the conveyor through the plaza, one about every 12 seconds. Walk up and click one
-  (or its card at the bottom of the screen) to buy it if you can afford it.
-- A bought brainrot stands on your base plot and earns cash every second at its own rate.
-- Twelve original characters on six rarities — Common, Rare, Epic, Legendary, Mythic, Secret — from
-  Bananaphone Barry (12/s) up to Baron Von Wafflefish (17,000/s). Every brainrot can spawn with a
-  Golden (x2), Diamond (x5) or Rainbow (x10) mutation.
-- Steal from other players' bases by clicking their brainrot and carrying it home — unless their
-  base is locked. The owner can lock their base for 45 seconds (2-minute cooldown); touching a thief
-  carrying their brainrot makes the thief drop it.
-- About every 3 minutes a tsunami warning counts down 10 seconds, then a wave sweeps the plaza,
-  washing away every brainrot still on the belt and pushing players outside their base back to spawn.
-- Earn $1,000,000 in total to rebirth: cash and brainrots reset, but income rises +25% per rebirth,
-  stacking forever. Cash, brainrots, rebirths and extra slots save with DataStore (autosave every
-  minute, save on leave), with a safe fallback when Studio runs without API access.
+**Play loop:**
+
+- Buy from the belt and carry your catch home; bases hold 4 brainrots, expandable to 10 with extra slots.
+- Steal from rivals by clicking a brainrot on their base and carrying it home — and lock your own base (45 s lock, 2 min cooldown). A base that was just robbed is shielded for 30 s.
+- The **Prize Book** collection index tracks every brainrot you have ever owned and pays cash prizes at 11, 22, 33 and 44 collected ($25,000 / $100,000 / $400,000 / $2,000,000). It survives rebirth.
+- Raccoon thieves sneak in from the bandit gate and grab a base's cheapest brainrot. Bop one for $250 and the stolen brainrot goes back to its owner; if it escapes through the gate, the brainrot is gone.
+- Rotating plaza events: the **sambal tsunami** sweeps everyone caught outside a base back to spawn, and **chili rain** drops cash peppers (worth $100–$500 each) all over the plaza.
+- Rebirth at $1,000,000 total earned for +25% income each time. Progress saves through DataStore.
 
 ## Layout
 
-- `src/shared/BrainrotCatalog.luau` — the whole cast, rarities, mutations and every tuning number.
-- `src/server/MapBuilder.luau` — builds the entire 3D world from Parts (plaza, conveyor, 8 base
-  plots, spawn, palms, stalls, clouds, wave wall, lighting).
-- `src/server/BrainrotSpawner.luau` — builds brainrot creature models from Parts and rides them
-  along the belt.
-- `src/server/BaseManager.luau` — plots, slots, base locks and plot signs.
-- `src/server/EconomyManager.luau` — the income tick, buys, sells, extra slots and the state
-  snapshots the client renders. The server decides all money.
-- `src/server/StealManager.luau` — picking up, carrying, dropping and completing a steal.
-- `src/server/WaveManager.luau` — the tsunami warning and sweep.
-- `src/server/RebirthManager.luau` — rebirth checks and resets.
-- `src/server/PlayerData.luau` — loading and saving with DataStore, safe when API access is off.
-- `src/server/Main.server.luau` — wires everything together; creates the RemoteEvents.
-- `src/client/ClientMain.client.luau` — builds the whole ScreenGui from code (cash and income at
-  the top centre, wave banner, conveyor cards at the bottom centre, base panel on the right, Lock
-  and Rebirth buttons at the bottom right).
+- `src/shared/BrainrotCatalog.luau` — roster, rarities, mutations and tuning.
+- `src/server/` — `Main.server.luau` bootstrap plus `MapBuilder`, `BaseManager`, `BrainrotSpawner`, `EconomyManager`, `PlayerData`, `RebirthManager`, `StealManager`, `ThiefManager` and `WaveManager`.
+- `src/client/ClientMain.client.luau` — the HUD, including the Prize Book panel.
+- `main.ts` — the make.fun entrypoint that assembles the submission dossier.
+- `default.project.json` — the Rojo project; `game.rbxl` is its built output.
 
-## Rebuild
+## Publishing
 
-    /home/hatch/workspace/roblox-game/tools/rojo build default.project.json --output game.rbxl
-
-Then check the hand-in program as the grader does:
-
-    mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
-
-`main.ts` (Node 22, standard library only) copies `game.rbxl`, `src/`, `screenshots/` and
-`PLAY.json` to `/output` and writes `/output/dossier.json` with `vendor/makefun-roblox.ts`, the
-kit's copy, unchanged.
-
-## Publishing (the owner does this in Roblox Studio)
-
-1. Open `game.rbxl` in Roblox Studio, File → Publish to Roblox, as a new Public experience.
-2. In Game Settings → Basic Info, write the make.fun play code into the description.
-3. On the Creator Dashboard, upload a square icon and thumbnails for the experience; the first
-   thumbnail must be the same picture as one of the files in `screenshots/`.
-4. Copy the play link, place id and universe id into `PLAY.json`.
-5. Take fresh screenshots of the game running in Studio into `screenshots/` (16:9, first by name
-   is the cover and the thumbnail).
-
-The rules are on the bounty's page (/bounty/roblox-brainrot-01) and in the kit's RULES.txt.
+The place is published from Roblox Studio from `game.rbxl` / the Rojo project.

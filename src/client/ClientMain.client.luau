@@ -1,9 +1,7 @@
 -- ClientMain.client.luau
--- The whole Brainrot Bazaar HUD, built in code: a top bar with cash, income
--- and rebirths; the belt panel on the left; your base panel on the right;
--- a task line that always points at the next goal; and banner/toast labels
--- for server messages. The client only ever renders the snapshots the
--- server sends — it never changes game state itself.
+-- The whole Brainrot Bazaar HUD, built in code: top bar, belt panel,
+-- base panel, the Prize Book index panel, task line, banners and toasts.
+-- Rendering is driven entirely by the server's state snapshots.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -11,164 +9,117 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
+local remotesFolder = ReplicatedStorage:WaitForChild("Remotes")
 local BrainrotCatalog = require(ReplicatedStorage:WaitForChild("BrainrotCatalog"))
-local remoteFolder = ReplicatedStorage:WaitForChild("Remotes")
-local remotes = {
-	RequestBuy = remoteFolder:WaitForChild("RequestBuy"),
-	RequestSell = remoteFolder:WaitForChild("RequestSell"),
-	RequestBuySlot = remoteFolder:WaitForChild("RequestBuySlot"),
-	RequestLock = remoteFolder:WaitForChild("RequestLock"),
-	RequestRebirth = remoteFolder:WaitForChild("RequestRebirth"),
-	StateUpdate = remoteFolder:WaitForChild("StateUpdate"),
-	ShowBanner = remoteFolder:WaitForChild("ShowBanner"),
-	ShowMessage = remoteFolder:WaitForChild("ShowMessage"),
-}
 
--- ---------------------------------------------------------------------------
--- Helpers
--- ---------------------------------------------------------------------------
+local remotes = {}
+for _, remoteName in ipairs({ "RequestBuy", "RequestSell", "RequestBuySlot", "RequestLock", "RequestRebirth", "RequestSteal", "StateUpdate", "ShowBanner", "ShowMessage" }) do
+	remotes[remoteName] = remotesFolder:WaitForChild(remoteName)
+end
 
 local function formatMoney(amount)
 	local value = math.floor(amount or 0)
 	local text = tostring(value)
-	local formatted = text:reverse():gsub("(%d%d%d)", "%1,"):reverse()
-	formatted = formatted:gsub("^,", "")
-	return "$" .. formatted
+	local out = ""
+	local count = 0
+	for i = #text, 1, -1 do
+		out = string.sub(text, i, i) .. out
+		count += 1
+		if count % 3 == 0 and i > 1 then
+			out = "," .. out
+		end
+	end
+	return "$" .. out
 end
 
-local function addCorner(instance, radius)
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, radius or 8)
-	corner.Parent = instance
-	return corner
-end
-
-local function makeFrame(parent, name, size, position, anchorPoint, color, transparency)
+local function makeFrame(parent, name, size, position, backgroundColor)
 	local frame = Instance.new("Frame")
 	frame.Name = name
 	frame.Size = size
 	frame.Position = position
-	frame.AnchorPoint = anchorPoint or Vector2.new(0, 0)
-	frame.BackgroundColor3 = color
-	frame.BackgroundTransparency = transparency or 0
+	frame.BackgroundColor3 = backgroundColor or Color3.fromRGB(35, 32, 48)
+	frame.BackgroundTransparency = 0.12
 	frame.BorderSizePixel = 0
 	frame.Parent = parent
 	return frame
 end
 
-local function makeLabel(parent, name, size, position, anchorPoint, text, textSize, textColor, align)
+local function makeLabel(parent, name, size, position, text, textSize, textColor)
 	local label = Instance.new("TextLabel")
 	label.Name = name
 	label.Size = size
 	label.Position = position
-	label.AnchorPoint = anchorPoint or Vector2.new(0, 0)
 	label.BackgroundTransparency = 1
 	label.Text = text or ""
 	label.TextSize = textSize or 16
 	label.TextColor3 = textColor or Color3.fromRGB(255, 255, 255)
-	label.Font = Enum.Font.GothamBold
-	label.TextXAlignment = align or Enum.TextXAlignment.Center
+	label.Font = Enum.Font.FredokaOne
+	label.TextXAlignment = Enum.TextXAlignment.Left
 	label.TextYAlignment = Enum.TextYAlignment.Center
 	label.Parent = parent
 	return label
 end
 
-local function makeButton(parent, name, size, position, anchorPoint, text, textSize, color)
+local function makeButton(parent, name, size, position, text, backgroundColor)
 	local button = Instance.new("TextButton")
 	button.Name = name
 	button.Size = size
 	button.Position = position
-	button.AnchorPoint = anchorPoint or Vector2.new(0, 0)
-	button.BackgroundColor3 = color
+	button.BackgroundColor3 = backgroundColor or Color3.fromRGB(80, 140, 255)
 	button.BorderSizePixel = 0
 	button.Text = text or ""
-	button.TextSize = textSize or 15
+	button.TextSize = 15
 	button.TextColor3 = Color3.fromRGB(255, 255, 255)
-	button.Font = Enum.Font.GothamBold
+	button.Font = Enum.Font.FredokaOne
 	button.AutoButtonColor = true
 	button.Parent = parent
-	addCorner(button, 8)
 	return button
 end
 
-local function makeScrollList(parent, name, size, position)
-	local scroll = Instance.new("ScrollingFrame")
-	scroll.Name = name
-	scroll.Size = size
-	scroll.Position = position
-	scroll.BackgroundTransparency = 1
-	scroll.BorderSizePixel = 0
-	scroll.ScrollBarThickness = 4
-	scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-	scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-	scroll.Parent = parent
-	local layout = Instance.new("UIListLayout")
-	layout.FillDirection = Enum.FillDirection.Vertical
-	layout.SortOrder = Enum.SortOrder.LayoutOrder
-	layout.Padding = UDim.new(0, 6)
-	layout.Parent = scroll
-	local padding = Instance.new("UIPadding")
-	padding.PaddingLeft = UDim.new(0, 4)
-	padding.PaddingRight = UDim.new(0, 4)
-	padding.PaddingTop = UDim.new(0, 4)
-	padding.Parent = scroll
-	return scroll
-end
-
--- ---------------------------------------------------------------------------
--- HUD skeleton
--- ---------------------------------------------------------------------------
+-- Root gui ---------------------------------------------------------------
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "BrainrotHUD"
+gui.Name = "BrainrotBazaarHUD"
 gui.ResetOnSpawn = false
 gui.Parent = playerGui
 
-local PANEL_COLOR = Color3.fromRGB(30, 32, 48)
-local CARD_COLOR = Color3.fromRGB(48, 52, 74)
+-- Top bar (starts clear of the Roblox menu buttons in the top-left).
+local topBar = makeFrame(gui, "TopBar", UDim2.new(0.76, 0, 0, 46), UDim2.new(0.12, 0, 0, 8), Color3.fromRGB(30, 28, 42))
+local cashLabel = makeLabel(topBar, "Cash", UDim2.new(0.3, 0, 1, 0), UDim2.new(0.02, 0, 0, 0), "$500", 20, Color3.fromRGB(140, 255, 150))
+local incomeLabel = makeLabel(topBar, "Income", UDim2.new(0.3, 0, 1, 0), UDim2.new(0.34, 0, 0, 0), "$0/s", 17, Color3.fromRGB(255, 230, 140))
+local rebirthLabel = makeLabel(topBar, "Rebirths", UDim2.new(0.22, 0, 1, 0), UDim2.new(0.64, 0, 0, 0), "Rebirths: 0", 16, Color3.fromRGB(200, 180, 255))
+local indexButton = makeButton(topBar, "IndexButton", UDim2.new(0.13, 0, 0.78, 0), UDim2.new(0.86, 0, 0.11, 0), "INDEX 0/44", Color3.fromRGB(170, 120, 40))
 
--- Top bar, kept clear of the Roblox menu buttons in the top-left corner.
-local topBar = makeFrame(gui, "TopBar", UDim2.new(0.76, 0, 0, 46), UDim2.new(0.12, 0, 0, 10),
-	Vector2.new(0, 0), PANEL_COLOR, 0.15)
-addCorner(topBar, 10)
-local cashLabel = makeLabel(topBar, "Cash", UDim2.new(0.34, 0, 1, 0), UDim2.new(0, 0, 0, 0),
-	Vector2.new(0, 0), "$500", 20, Color3.fromRGB(140, 255, 150))
-local incomeLabel = makeLabel(topBar, "Income", UDim2.new(0.33, 0, 1, 0), UDim2.new(0.34, 0, 0, 0),
-	Vector2.new(0, 0), "$0/s", 18, Color3.fromRGB(255, 255, 255))
-local rebirthLabel = makeLabel(topBar, "Rebirths", UDim2.new(0.33, 0, 1, 0), UDim2.new(0.67, 0, 0, 0),
-	Vector2.new(0, 0), "Rebirths: 0", 18, Color3.fromRGB(255, 170, 255))
+-- Task line.
+local taskLabel = makeLabel(gui, "Task", UDim2.new(0.6, 0, 0, 30), UDim2.new(0.2, 0, 0, 60), "", 17, Color3.fromRGB(255, 255, 255))
+taskLabel.TextXAlignment = Enum.TextXAlignment.Center
+taskLabel.BackgroundTransparency = 0.35
+taskLabel.BackgroundColor3 = Color3.fromRGB(30, 28, 42)
 
-local taskLabel = makeLabel(gui, "Task", UDim2.new(0.76, 0, 0, 26), UDim2.new(0.12, 0, 0, 62),
-	Vector2.new(0, 0), "", 16, Color3.fromRGB(255, 230, 150))
-
-local bannerLabel = makeLabel(gui, "Banner", UDim2.new(0.8, 0, 0, 64), UDim2.new(0.5, 0, 0.1, 0),
-	Vector2.new(0.5, 0), "", 42, Color3.fromRGB(120, 210, 255))
+-- Banner and toast.
+local bannerLabel = makeLabel(gui, "Banner", UDim2.new(0.7, 0, 0, 54), UDim2.new(0.15, 0, 0, 100), "", 32, Color3.fromRGB(255, 120, 70))
+bannerLabel.TextXAlignment = Enum.TextXAlignment.Center
 bannerLabel.Visible = false
-local toastLabel = makeLabel(gui, "Toast", UDim2.new(0.6, 0, 0, 34), UDim2.new(0.5, 0, 0.2, 0),
-	Vector2.new(0.5, 0), "", 18, Color3.fromRGB(255, 255, 255))
+local toastLabel = makeLabel(gui, "Toast", UDim2.new(0.5, 0, 0, 34), UDim2.new(0.25, 0, 0, 160), "", 17, Color3.fromRGB(255, 255, 255))
+toastLabel.TextXAlignment = Enum.TextXAlignment.Center
+toastLabel.BackgroundTransparency = 0.3
+toastLabel.BackgroundColor3 = Color3.fromRGB(30, 28, 42)
 toastLabel.Visible = false
 
 -- Belt panel (left).
-local beltPanel = makeFrame(gui, "BeltPanel", UDim2.new(0, 224, 0, 400), UDim2.new(0, 8, 0.16, 0),
-	Vector2.new(0, 0), PANEL_COLOR, 0.15)
-addCorner(beltPanel, 10)
-makeLabel(beltPanel, "Title", UDim2.new(1, 0, 0, 30), UDim2.new(0, 0, 0, 2),
-	Vector2.new(0, 0), "ON THE BELT", 17, Color3.fromRGB(255, 210, 90))
-local beltList = makeScrollList(beltPanel, "BeltList", UDim2.new(1, -4, 1, -38), UDim2.new(0, 2, 0, 34))
+local beltPanel = makeFrame(gui, "BeltPanel", UDim2.new(0, 228, 0, 330), UDim2.new(0, 10, 0.28, 0), Color3.fromRGB(35, 32, 48))
+makeLabel(beltPanel, "Title", UDim2.new(1, -12, 0, 26), UDim2.new(0, 6, 0, 4), "ON THE BELT", 17, Color3.fromRGB(255, 210, 110))
+local beltList = makeFrame(beltPanel, "List", UDim2.new(1, -12, 1, -42), UDim2.new(0, 6, 0, 36), Color3.fromRGB(25, 23, 36))
+beltList.BackgroundTransparency = 1
 
 -- Base panel (right).
-local basePanel = makeFrame(gui, "BasePanel", UDim2.new(0, 224, 0, 400), UDim2.new(1, -8, 0.16, 0),
-	Vector2.new(1, 0), PANEL_COLOR, 0.15)
-addCorner(basePanel, 10)
-makeLabel(basePanel, "Title", UDim2.new(1, 0, 0, 30), UDim2.new(0, 0, 0, 2),
-	Vector2.new(0, 0), "YOUR BASE", 17, Color3.fromRGB(140, 255, 150))
-local baseList = makeScrollList(basePanel, "BaseList", UDim2.new(1, -4, 0, 218), UDim2.new(0, 2, 0, 34))
-local buySlotButton = makeButton(basePanel, "BuySlot", UDim2.new(1, -12, 0, 34), UDim2.new(0, 6, 0, 258),
-	Vector2.new(0, 0), "Buy Slot", 15, Color3.fromRGB(70, 140, 90))
-local lockButton = makeButton(basePanel, "Lock", UDim2.new(1, -12, 0, 34), UDim2.new(0, 6, 0, 298),
-	Vector2.new(0, 0), "Lock Base", 15, Color3.fromRGB(90, 110, 180))
-local rebirthButton = makeButton(basePanel, "Rebirth", UDim2.new(1, -12, 0, 34), UDim2.new(0, 6, 0, 338),
-	Vector2.new(0, 0), "Rebirth", 14, Color3.fromRGB(170, 80, 200))
+local basePanel = makeFrame(gui, "BasePanel", UDim2.new(0, 228, 0, 400), UDim2.new(1, -238, 0.28, 0), Color3.fromRGB(35, 32, 48))
+makeLabel(basePanel, "Title", UDim2.new(1, -12, 0, 26), UDim2.new(0, 6, 0, 4), "YOUR BASE", 17, Color3.fromRGB(140, 255, 150))
+local baseList = makeFrame(basePanel, "List", UDim2.new(1, -12, 0, 210), UDim2.new(0, 6, 0, 36), Color3.fromRGB(25, 23, 36))
+baseList.BackgroundTransparency = 1
+local buySlotButton = makeButton(basePanel, "BuySlot", UDim2.new(1, -12, 0, 34), UDim2.new(0, 6, 0, 252), "Buy slot", Color3.fromRGB(70, 160, 90))
+local lockButton = makeButton(basePanel, "Lock", UDim2.new(1, -12, 0, 34), UDim2.new(0, 6, 0, 292), "Lock base", Color3.fromRGB(90, 110, 200))
+local rebirthButton = makeButton(basePanel, "Rebirth", UDim2.new(1, -12, 0, 44), UDim2.new(0, 6, 0, 332), "Rebirth", Color3.fromRGB(150, 80, 200))
 
 buySlotButton.MouseButton1Click:Connect(function()
 	remotes.RequestBuySlot:FireServer()
@@ -180,133 +131,167 @@ rebirthButton.MouseButton1Click:Connect(function()
 	remotes.RequestRebirth:FireServer()
 end)
 
--- ---------------------------------------------------------------------------
--- Rendering
--- ---------------------------------------------------------------------------
+-- Prize Book panel (centre, hidden until toggled).
+local indexPanel = makeFrame(gui, "IndexPanel", UDim2.new(0, 560, 0, 430), UDim2.new(0.5, -280, 0.5, -215), Color3.fromRGB(42, 36, 28))
+indexPanel.Visible = false
+local indexTitle = makeLabel(indexPanel, "Title", UDim2.new(1, -90, 0, 34), UDim2.new(0, 14, 0, 8), "PRIZE BOOK", 24, Color3.fromRGB(255, 220, 130))
+indexTitle.TextXAlignment = Enum.TextXAlignment.Left
+local indexHeader = makeLabel(indexPanel, "Header", UDim2.new(1, -28, 0, 26), UDim2.new(0, 14, 0, 44), "", 15, Color3.fromRGB(255, 240, 200))
+local indexClose = makeButton(indexPanel, "Close", UDim2.new(0, 64, 0, 32), UDim2.new(1, -78, 0, 8), "Close", Color3.fromRGB(180, 70, 60))
+local indexScroll = Instance.new("ScrollingFrame")
+indexScroll.Name = "Grid"
+indexScroll.Size = UDim2.new(1, -28, 1, -86)
+indexScroll.Position = UDim2.new(0, 14, 0, 76)
+indexScroll.BackgroundTransparency = 0.4
+indexScroll.BackgroundColor3 = Color3.fromRGB(25, 22, 18)
+indexScroll.BorderSizePixel = 0
+indexScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+indexScroll.Parent = indexPanel
+local gridLayout = Instance.new("UIGridLayout")
+gridLayout.CellSize = UDim2.new(0, 124, 0, 74)
+gridLayout.CellPadding = UDim2.new(0, 6, 0, 6)
+gridLayout.Parent = indexScroll
+
+indexButton.MouseButton1Click:Connect(function()
+	indexPanel.Visible = not indexPanel.Visible
+end)
+indexClose.MouseButton1Click:Connect(function()
+	indexPanel.Visible = false
+end)
+
+-- Roster ordered by rarity order, then cost ascending.
+local roster = {}
+for _, entry in ipairs(BrainrotCatalog.Characters) do
+	table.insert(roster, entry)
+end
+table.sort(roster, function(a, b)
+	local orderA = BrainrotCatalog.GetRarityInfo(a.Rarity).Order
+	local orderB = BrainrotCatalog.GetRarityInfo(b.Rarity).Order
+	if orderA ~= orderB then
+		return orderA < orderB
+	end
+	return a.Cost < b.Cost
+end)
 
 local currentState = nil
-local lastBeltKey = nil
-local lastOwnedKey = nil
-
-local function beltKeyOf(belt)
-	local ids = {}
-	for _, entry in ipairs(belt) do
-		table.insert(ids, tostring(entry.Id))
-	end
-	return table.concat(ids, ",")
-end
-
-local function ownedKeyOf(owned)
-	local parts = {}
-	for _, entry in ipairs(owned) do
-		table.insert(parts, entry.Slot .. ":" .. entry.CharacterId .. ":" .. entry.Mutation)
-	end
-	return table.concat(parts, ",")
-end
-
-local function renderBelt(belt)
-	for _, child in ipairs(beltList:GetChildren()) do
-		if child:IsA("GuiButton") or child:IsA("Frame") then
-			child:Destroy()
-		end
-	end
-	if #belt == 0 then
-		makeLabel(beltList, "Empty", UDim2.new(1, -8, 0, 40), UDim2.new(0, 0, 0, 0),
-			Vector2.new(0, 0), "The belt is empty...", 14, Color3.fromRGB(200, 200, 210))
-		return
-	end
-	-- Show the most valuable brainrots first: sort a copy by income rate,
-	-- highest earner at the top of the panel.
-	local sorted = {}
-	for _, entry in ipairs(belt) do
-		table.insert(sorted, entry)
-	end
-	table.sort(sorted, function(a, b)
-		return (a.Rate or 0) > (b.Rate or 0)
-	end)
-	for _, entry in ipairs(sorted) do
-		local card = makeButton(beltList, "BeltCard" .. entry.Id, UDim2.new(1, -8, 0, 58),
-			UDim2.new(0, 0, 0, 0), Vector2.new(0, 0), "", 14, CARD_COLOR)
-		makeLabel(card, "Name", UDim2.new(1, -10, 0, 20), UDim2.new(0, 5, 0, 3),
-			Vector2.new(0, 0), entry.Name, 14, Color3.fromRGB(255, 255, 255), Enum.TextXAlignment.Left)
-		local rarityColor = BrainrotCatalog.GetRarityColor(entry.Rarity)
-		makeLabel(card, "Rarity", UDim2.new(0.5, 0, 0, 16), UDim2.new(0, 5, 0, 24),
-			Vector2.new(0, 0), entry.Rarity, 12, rarityColor, Enum.TextXAlignment.Left)
-		makeLabel(card, "Rate", UDim2.new(0.5, -5, 0, 16), UDim2.new(0.5, 0, 0, 24),
-			Vector2.new(0, 0), formatMoney(entry.Rate) .. "/s", 12, Color3.fromRGB(140, 255, 150), Enum.TextXAlignment.Right)
-		makeLabel(card, "Price", UDim2.new(1, -10, 0, 16), UDim2.new(0, 5, 0, 40),
-			Vector2.new(0, 0), formatMoney(entry.Cost), 13, Color3.fromRGB(255, 220, 90), Enum.TextXAlignment.Left)
-		local beltId = entry.Id
-		card.MouseButton1Click:Connect(function()
-			remotes.RequestBuy:FireServer(beltId)
-		end)
-	end
-end
-
-local function renderBase(owned)
-	for _, child in ipairs(baseList:GetChildren()) do
-		if child:IsA("GuiButton") or child:IsA("Frame") then
-			child:Destroy()
-		end
-	end
-	if #owned == 0 then
-		makeLabel(baseList, "Empty", UDim2.new(1, -8, 0, 40), UDim2.new(0, 0, 0, 0),
-			Vector2.new(0, 0), "Nothing here yet.\nBuy from the belt!", 14, Color3.fromRGB(200, 200, 210))
-		return
-	end
-	for _, entry in ipairs(owned) do
-		local card = makeFrame(baseList, "BaseCard" .. entry.Slot, UDim2.new(1, -8, 0, 46),
-			UDim2.new(0, 0, 0, 0), Vector2.new(0, 0), CARD_COLOR, 0)
-		addCorner(card, 8)
-		makeLabel(card, "Name", UDim2.new(1, -70, 0, 20), UDim2.new(0, 5, 0, 3),
-			Vector2.new(0, 0), entry.Name, 13, Color3.fromRGB(255, 255, 255), Enum.TextXAlignment.Left)
-		makeLabel(card, "Rate", UDim2.new(1, -70, 0, 16), UDim2.new(0, 5, 0, 24),
-			Vector2.new(0, 0), formatMoney(entry.Rate) .. "/s", 12, Color3.fromRGB(140, 255, 150), Enum.TextXAlignment.Left)
-		local sellButton = makeButton(card, "Sell", UDim2.new(0, 56, 0, 28), UDim2.new(1, -5, 0.5, 0),
-			Vector2.new(1, 0.5), "Sell", 13, Color3.fromRGB(180, 80, 70))
-		local slot = entry.Slot
-		sellButton.MouseButton1Click:Connect(function()
-			remotes.RequestSell:FireServer(slot)
-		end)
-	end
-end
+local lastBeltKey = ""
+local lastIndexCountRendered = -1
 
 local function computeTaskText(state)
 	if state.Carrying then
-		if state.Carrying.Steal then
-			return "Run! Carry the stolen brainrot home!"
-		end
 		return "Carry it home to your base!"
 	end
-	if #state.Owned == 0 then
+	if state.ThiefActive then
+		return "BOP THE RACCOON THIEF!"
+	end
+	if not state.Owned or #state.Owned == 0 then
 		return "Buy a brainrot from the belt!"
 	end
-	if state.TotalEarned >= state.RebirthThreshold then
-		return "You can rebirth! +25% income forever"
+	if state.NextMilestone and state.NextMilestone.Count - state.IndexCount <= 3 then
+		local more = state.NextMilestone.Count - state.IndexCount
+		return "Prize Book: " .. state.IndexCount .. "/" .. state.IndexTotal .. " — " .. more .. " more for " .. formatMoney(state.NextMilestone.Reward) .. "!"
 	end
-	if state.NextSlotCost and #state.Owned >= state.Slots and state.Cash >= state.NextSlotCost then
-		return "Your base is full — buy another slot!"
+	if state.NextSlotCost and state.Cash >= state.NextSlotCost then
+		return "Buy another base slot!"
 	end
 	return "Earn $1,000,000 total to rebirth (+25% income)"
 end
 
-local function refreshButtons(state)
-	if state.NextSlotCost then
-		buySlotButton.Visible = true
-		buySlotButton.Text = "Buy Slot (" .. formatMoney(state.NextSlotCost) .. ")"
-	else
-		buySlotButton.Visible = false
+local function renderBelt(state)
+	local keyParts = {}
+	for _, entry in ipairs(state.Belt or {}) do
+		table.insert(keyParts, tostring(entry.Id))
 	end
-	if state.Lock and state.Lock.Locked then
-		lockButton.Text = "Locked (" .. tostring(state.Lock.SecondsLeft) .. "s)"
-	elseif state.Lock and state.Lock.CooldownLeft and state.Lock.CooldownLeft > 0 then
-		lockButton.Text = "Lock (cooldown " .. tostring(state.Lock.CooldownLeft) .. "s)"
-	else
-		lockButton.Text = "Lock Base (45s)"
+	local key = table.concat(keyParts, ",")
+	if key == lastBeltKey then
+		return
 	end
-	local multiplierText = string.format("x%.2f", state.RebirthMultiplier or 1)
-	rebirthButton.Text = "Rebirth " .. formatMoney(state.TotalEarned) .. " / "
-		.. formatMoney(state.RebirthThreshold) .. " (" .. multiplierText .. ")"
+	lastBeltKey = key
+	for _, child in ipairs(beltList:GetChildren()) do
+		child:Destroy()
+	end
+	local y = 0
+	for _, entry in ipairs(state.Belt or {}) do
+		local card = makeButton(beltList, "Card" .. entry.Id, UDim2.new(1, 0, 0, 40), UDim2.new(0, 0, 0, y), "", Color3.fromRGB(55, 52, 75))
+		local nameLabel = makeLabel(card, "Name", UDim2.new(1, -8, 0, 20), UDim2.new(0, 4, 0, 1), entry.Name, 14, BrainrotCatalog.GetRarityColor(entry.Rarity))
+		nameLabel.BackgroundTransparency = 1
+		local detail = makeLabel(card, "Detail", UDim2.new(1, -8, 0, 18), UDim2.new(0, 4, 0, 21), entry.Rarity .. "  " .. formatMoney(entry.Rate) .. "/s   " .. formatMoney(entry.Cost), 12, Color3.fromRGB(230, 230, 230))
+		detail.BackgroundTransparency = 1
+		local beltId = entry.Id
+		card.MouseButton1Click:Connect(function()
+			remotes.RequestBuy:FireServer(beltId)
+		end)
+		y += 44
+	end
+end
+
+local function renderBase(state)
+	for _, child in ipairs(baseList:GetChildren()) do
+		child:Destroy()
+	end
+	local y = 0
+	for _, entry in ipairs(state.Owned or {}) do
+		local row = makeFrame(baseList, "Row" .. entry.Slot, UDim2.new(1, 0, 0, 40), UDim2.new(0, 0, 0, y), Color3.fromRGB(55, 52, 75))
+		row.BackgroundTransparency = 0.1
+		local nameLabel = makeLabel(row, "Name", UDim2.new(0.68, 0, 0, 20), UDim2.new(0, 4, 0, 1), entry.Name, 13, BrainrotCatalog.GetRarityColor(entry.Rarity))
+		nameLabel.BackgroundTransparency = 1
+		local detail = makeLabel(row, "Detail", UDim2.new(0.68, 0, 0, 18), UDim2.new(0, 4, 0, 21), formatMoney(entry.Rate) .. "/s", 12, Color3.fromRGB(230, 230, 230))
+		detail.BackgroundTransparency = 1
+		local slot = entry.Slot
+		local sell = makeButton(row, "Sell", UDim2.new(0.3, 0, 0, 30), UDim2.new(0.69, 0, 0, 5), "Sell", Color3.fromRGB(190, 90, 70))
+		sell.MouseButton1Click:Connect(function()
+			remotes.RequestSell:FireServer(slot)
+		end)
+		y += 44
+	end
+	if y == 0 then
+		makeLabel(baseList, "Empty", UDim2.new(1, 0, 0, 24), UDim2.new(0, 0, 0, 0), "No brainrots yet.", 14, Color3.fromRGB(180, 180, 190))
+	end
+end
+
+local function renderIndexGrid(state)
+	if state.IndexCount == lastIndexCountRendered then
+		return
+	end
+	lastIndexCountRendered = state.IndexCount
+	for _, child in ipairs(indexScroll:GetChildren()) do
+		if child:IsA("Frame") or child:IsA("TextButton") then
+			child:Destroy()
+		end
+	end
+	local collected = {}
+	for _, characterId in ipairs(state.Index or {}) do
+		collected[characterId] = true
+	end
+	for _, entry in ipairs(roster) do
+		local cell = makeFrame(indexScroll, "Cell_" .. entry.Id, UDim2.new(0, 124, 0, 74), UDim2.new(0, 0, 0, 0), Color3.fromRGB(60, 55, 70))
+		if collected[entry.Id] then
+			cell.BackgroundColor3 = BrainrotCatalog.GetRarityColor(entry.Rarity)
+			local nameLabel = makeLabel(cell, "Name", UDim2.new(1, -8, 0, 38), UDim2.new(0, 4, 0, 4), entry.Name, 12, Color3.fromRGB(25, 22, 30))
+			nameLabel.TextWrapped = true
+			nameLabel.BackgroundTransparency = 1
+			local income = makeLabel(cell, "Income", UDim2.new(1, -8, 0, 18), UDim2.new(0, 4, 0, 50), formatMoney(entry.IncomePerSecond) .. "/s", 12, Color3.fromRGB(25, 22, 30))
+			income.BackgroundTransparency = 1
+		else
+			cell.BackgroundColor3 = Color3.fromRGB(85, 85, 92)
+			local nameLabel = makeLabel(cell, "Name", UDim2.new(1, -8, 0, 38), UDim2.new(0, 4, 0, 4), "???", 14, Color3.fromRGB(220, 220, 225))
+			nameLabel.BackgroundTransparency = 1
+			local rarity = makeLabel(cell, "Rarity", UDim2.new(1, -8, 0, 18), UDim2.new(0, 4, 0, 50), entry.Rarity, 12, Color3.fromRGB(200, 200, 205))
+			rarity.BackgroundTransparency = 1
+		end
+	end
+	indexScroll.CanvasSize = UDim2.new(0, 0, 0, math.ceil(#roster / 4) * 80 + 10)
+end
+
+local function renderIndexHeader(state)
+	local text = "You have collected " .. state.IndexCount .. " of " .. state.IndexTotal .. " brainrots"
+	if state.NextMilestone then
+		text ..= "  •  Next Prize Book prize at " .. state.NextMilestone.Count .. " collected: " .. formatMoney(state.NextMilestone.Reward)
+	else
+		text ..= "  •  Every Prize Book prize has been claimed — collection complete!"
+	end
+	indexHeader.Text = text
+	indexButton.Text = "INDEX " .. state.IndexCount .. "/" .. state.IndexTotal
 end
 
 local function onStateUpdate(state)
@@ -318,48 +303,51 @@ local function onStateUpdate(state)
 	incomeLabel.Text = formatMoney(state.IncomePerSecond) .. "/s"
 	rebirthLabel.Text = "Rebirths: " .. tostring(state.Rebirths)
 	taskLabel.Text = computeTaskText(state)
-
-	local beltKey = beltKeyOf(state.Belt or {})
-	if beltKey ~= lastBeltKey then
-		lastBeltKey = beltKey
-		renderBelt(state.Belt or {})
+	renderBelt(state)
+	renderBase(state)
+	if state.NextSlotCost then
+		buySlotButton.Visible = true
+		buySlotButton.Text = "Buy slot (" .. formatMoney(state.NextSlotCost) .. ")"
+	else
+		buySlotButton.Visible = false
 	end
-	local ownedKey = ownedKeyOf(state.Owned or {})
-	if ownedKey ~= lastOwnedKey then
-		lastOwnedKey = ownedKey
-		renderBase(state.Owned or {})
+	if state.Lock and state.Lock.Locked then
+		lockButton.Text = "LOCKED (" .. tostring(state.Lock.SecondsLeft) .. "s)"
+	elseif state.Lock and state.Lock.CooldownLeft and state.Lock.CooldownLeft > 0 then
+		lockButton.Text = "Lock (cooldown " .. tostring(state.Lock.CooldownLeft) .. "s)"
+	else
+		lockButton.Text = "Lock base (45s)"
 	end
-	refreshButtons(state)
+	local progress = math.min(state.TotalEarned or 0, state.RebirthThreshold or 1000000)
+	rebirthButton.Text = "Rebirth: " .. formatMoney(progress) .. " / " .. formatMoney(state.RebirthThreshold or 1000000) .. "\nMultiplier x" .. string.format("%.2f", state.RebirthMultiplier or 1)
+	renderIndexHeader(state)
+	renderIndexGrid(state)
 end
 
--- ---------------------------------------------------------------------------
--- Banners and toasts
--- ---------------------------------------------------------------------------
+remotes.StateUpdate.OnClientEvent:Connect(onStateUpdate)
 
 local bannerToken = 0
-remotes.ShowBanner.OnClientEvent:Connect(function(text)
+remotes.ShowBanner.OnClientEvent:Connect(function(message)
 	bannerToken += 1
-	local myToken = bannerToken
-	bannerLabel.Text = tostring(text)
+	local token = bannerToken
+	bannerLabel.Text = tostring(message)
 	bannerLabel.Visible = true
 	task.delay(3, function()
-		if bannerToken == myToken then
+		if bannerToken == token then
 			bannerLabel.Visible = false
 		end
 	end)
 end)
 
 local toastToken = 0
-remotes.ShowMessage.OnClientEvent:Connect(function(text)
+remotes.ShowMessage.OnClientEvent:Connect(function(message)
 	toastToken += 1
-	local myToken = toastToken
-	toastLabel.Text = tostring(text)
+	local token = toastToken
+	toastLabel.Text = tostring(message)
 	toastLabel.Visible = true
 	task.delay(2.5, function()
-		if toastToken == myToken then
+		if toastToken == token then
 			toastLabel.Visible = false
 		end
 	end)
 end)
-
-remotes.StateUpdate.OnClientEvent:Connect(onStateUpdate)

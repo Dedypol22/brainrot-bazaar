@@ -1,7 +1,6 @@
 -- RebirthManager.luau
--- Rebirth: hand back your whole base and your cash, keep your bought slots,
--- and earn a permanent +25% income multiplier per rebirth. The gate is
--- lifetime earnings, so a rich-but-spendy player still qualifies.
+-- Rebirth: at $1,000,000 total earned, reset cash and brainrots for a
+-- permanent +25% income multiplier per rebirth. The Prize Book survives.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -35,9 +34,9 @@ function RebirthManager.TryRebirth(player)
 	data.Rebirths += 1
 	data.Cash = BrainrotCatalog.StartingCash
 	data.TotalEarned = 0
-	-- SlotsBought deliberately survives: room you paid for stays yours.
 	PlayerData.ClearOwnedBrainrots(player)
 	BaseManager.ClearAllBaseBrainrots(player)
+	-- SlotsBought, Index and IndexRewardsClaimed are kept on purpose.
 	PlayerData.Sync(player)
 	return true
 end

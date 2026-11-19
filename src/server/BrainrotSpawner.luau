@@ -1,8 +1,6 @@
 -- BrainrotSpawner.luau
--- Builds the blocky brainrot character models out of Parts, runs the
--- conveyor belt (spawning, movement, cleanup) and answers belt queries for
--- the client snapshot. Models are simple on purpose: a body, eyes, feet,
--- arms and one signature prop per character.
+-- Builds blocky brainrot models from parts and runs the conveyor belt:
+-- spawning, movement along the belt and despawning at the far end.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -11,34 +9,19 @@ local Workspace = game:GetService("Workspace")
 local BrainrotCatalog = require(ReplicatedStorage:WaitForChild("BrainrotCatalog"))
 
 local BrainrotSpawner = {}
-
--- Assigned by Main; called when a player clicks a brainrot on the belt.
 BrainrotSpawner.ClickedCallback = function(_player, _beltId) end
 
 local MODEL_SCALE = 2.1
-local BELT_Y = BrainrotCatalog.BeltTopY + 0.05
 
+local beltEntries = {}
+local nextBeltId = 1
 local beltFolder = nil
-local beltEntries = {} -- array of { Id, CharacterId, Mutation, Model, X }
-local nextBeltId = 0
-local initialised = false
-
-local function formatMoney(amount)
-	local text = tostring(math.floor(amount))
-	local formatted = text:reverse():gsub("(%d%d%d)", "%1,"):reverse()
-	formatted = formatted:gsub("^,", "")
-	return formatted
-end
-
--- ---------------------------------------------------------------------------
--- Model building
--- ---------------------------------------------------------------------------
+local worldMap = nil
 
 local function makeModelPart(model, baseCFrame, name, size, offset, color, material, shape)
 	local part = Instance.new("Part")
 	part.Name = name
 	part.Size = size
-	part.CFrame = baseCFrame * CFrame.new(offset)
 	part.Color = color
 	part.Material = material or Enum.Material.SmoothPlastic
 	if shape then
@@ -48,151 +31,151 @@ local function makeModelPart(model, baseCFrame, name, size, offset, color, mater
 	part.CanCollide = false
 	part.TopSurface = Enum.SurfaceType.Smooth
 	part.BottomSurface = Enum.SurfaceType.Smooth
+	part.CFrame = baseCFrame * CFrame.new(offset)
 	part.Parent = model
 	return part
 end
 
-local function addCharacterFeature(model, baseCFrame, character, scale)
-	local accent = character.AccentColor
-	local function v(x, y, z)
-		return Vector3.new(x * scale, y * scale, z * scale)
-	end
-	local feature = character.Feature
+local function addCharacterFeature(model, baseCFrame, characterEntry)
+	local accent = characterEntry.AccentColor
+	local feature = characterEntry.Feature
 	if feature == "Phone" then
-		makeModelPart(model, baseCFrame, "Phone", v(0.28, 0.95, 0.55), v(1.05, 1.45, 0.25), accent, Enum.Material.Neon)
+		makeModelPart(model, baseCFrame, "Phone", Vector3.new(0.35, 0.9, 0.15), Vector3.new(1.15, 0.3, 0), accent, Enum.Material.SmoothPlastic)
 	elseif feature == "Sword" then
-		makeModelPart(model, baseCFrame, "SwordBlade", v(0.14, 1.5, 0.34), v(1.1, 1.25, 0), Color3.fromRGB(220, 225, 235), Enum.Material.Metal)
-		makeModelPart(model, baseCFrame, "SwordGuard", v(0.16, 0.28, 0.8), v(1.1, 0.55, 0), accent, Enum.Material.Metal)
+		makeModelPart(model, baseCFrame, "SwordBlade", Vector3.new(0.18, 1.6, 0.18), Vector3.new(1.25, 0.4, 0), Color3.fromRGB(220, 220, 230), Enum.Material.Metal)
+		makeModelPart(model, baseCFrame, "SwordGuard", Vector3.new(0.7, 0.18, 0.3), Vector3.new(1.25, -0.35, 0), accent, Enum.Material.SmoothPlastic)
 	elseif feature == "Headphones" then
-		makeModelPart(model, baseCFrame, "HeadphoneBand", v(1.7, 0.24, 0.5), v(0, 2.32, 0), accent, Enum.Material.SmoothPlastic)
-		makeModelPart(model, baseCFrame, "EarCupL", v(0.32, 0.75, 0.75), v(-0.98, 1.65, 0), accent, Enum.Material.SmoothPlastic)
-		makeModelPart(model, baseCFrame, "EarCupR", v(0.32, 0.75, 0.75), v(0.98, 1.65, 0), accent, Enum.Material.SmoothPlastic)
+		makeModelPart(model, baseCFrame, "HeadphoneBand", Vector3.new(1.9, 0.25, 0.5), Vector3.new(0, 1.15, 0), accent, Enum.Material.SmoothPlastic)
+		makeModelPart(model, baseCFrame, "EarCupL", Vector3.new(0.35, 0.8, 0.8), Vector3.new(-1.0, 0.65, 0), accent, Enum.Material.SmoothPlastic)
+		makeModelPart(model, baseCFrame, "EarCupR", Vector3.new(0.35, 0.8, 0.8), Vector3.new(1.0, 0.65, 0), accent, Enum.Material.SmoothPlastic)
 	elseif feature == "CaptainHat" then
-		local brim = makeModelPart(model, baseCFrame, "HatBrim", v(1.8, 0.14, 1.8), v(0, 2.22, 0), accent, Enum.Material.SmoothPlastic, Enum.PartType.Cylinder)
-		brim.CFrame = brim.CFrame * CFrame.Angles(0, 0, math.rad(90))
-		local top = makeModelPart(model, baseCFrame, "HatTop", v(1.35, 0.4, 1.35), v(0, 2.42, 0), accent, Enum.Material.SmoothPlastic, Enum.PartType.Cylinder)
-		top.CFrame = top.CFrame * CFrame.Angles(0, 0, math.rad(90))
+		makeModelPart(model, baseCFrame, "HatTop", Vector3.new(1.5, 0.45, 1.5), Vector3.new(0, 1.25, 0), Color3.fromRGB(250, 250, 250), Enum.Material.SmoothPlastic, Enum.PartType.Cylinder)
+		makeModelPart(model, baseCFrame, "HatBrim", Vector3.new(0.9, 0.15, 0.7), Vector3.new(0, 1.05, 0.75), accent, Enum.Material.SmoothPlastic)
 	elseif feature == "Bubblegum" then
-		makeModelPart(model, baseCFrame, "Bubble", v(0.85, 0.85, 0.85), v(0, 1.1, 0.85), accent, Enum.Material.SmoothPlastic, Enum.PartType.Ball)
+		makeModelPart(model, baseCFrame, "Bubble", Vector3.new(0.9, 0.9, 0.9), Vector3.new(0, 0.35, 0.95), Color3.fromRGB(255, 150, 200), Enum.Material.SmoothPlastic, Enum.PartType.Ball)
 	elseif feature == "Toilet" then
-		makeModelPart(model, baseCFrame, "ToiletSeat", v(1.45, 0.85, 1.25), v(0, 0.45, -1.05), accent, Enum.Material.SmoothPlastic)
-		makeModelPart(model, baseCFrame, "ToiletTank", v(1.45, 1.15, 0.5), v(0, 1.35, -1.45), accent, Enum.Material.SmoothPlastic)
+		makeModelPart(model, baseCFrame, "ToiletBowl", Vector3.new(1.3, 0.8, 1.3), Vector3.new(0, -0.9, 0.3), Color3.fromRGB(250, 250, 250), Enum.Material.SmoothPlastic)
+		makeModelPart(model, baseCFrame, "ToiletTank", Vector3.new(1.3, 1.1, 0.45), Vector3.new(0, -0.4, -0.75), Color3.fromRGB(250, 250, 250), Enum.Material.SmoothPlastic)
 	elseif feature == "Crown" then
-		makeModelPart(model, baseCFrame, "CrownBase", v(1.25, 0.42, 1.25), v(0, 2.32, 0), Color3.fromRGB(255, 200, 40), Enum.Material.Metal)
-		for _, dx in ipairs({ -0.45, 0.45 }) do
-			for _, dz in ipairs({ -0.45, 0.45 }) do
-				makeModelPart(model, baseCFrame, "CrownPoint", v(0.3, 0.5, 0.3), v(dx, 2.7, dz), Color3.fromRGB(255, 200, 40), Enum.Material.Metal)
-			end
-		end
+		makeModelPart(model, baseCFrame, "CrownBase", Vector3.new(1.5, 0.5, 1.5), Vector3.new(0, 1.3, 0), Color3.fromRGB(255, 200, 40), Enum.Material.Metal)
+		makeModelPart(model, baseCFrame, "CrownPointL", Vector3.new(0.35, 0.6, 0.35), Vector3.new(-0.5, 1.75, 0), Color3.fromRGB(255, 200, 40), Enum.Material.Metal)
+		makeModelPart(model, baseCFrame, "CrownPointR", Vector3.new(0.35, 0.6, 0.35), Vector3.new(0.5, 1.75, 0), Color3.fromRGB(255, 200, 40), Enum.Material.Metal)
+		makeModelPart(model, baseCFrame, "CrownGem", Vector3.new(0.35, 0.35, 0.35), Vector3.new(0, 1.3, 0.8), accent, Enum.Material.Neon, Enum.PartType.Ball)
 	elseif feature == "Glasses" then
-		local glassColor = Color3.fromRGB(30, 30, 40)
-		makeModelPart(model, baseCFrame, "GlassL", v(0.58, 0.58, 0.1), v(-0.44, 1.5, 0.66), glassColor, Enum.Material.Glass)
-		makeModelPart(model, baseCFrame, "GlassR", v(0.58, 0.58, 0.1), v(0.44, 1.5, 0.66), glassColor, Enum.Material.Glass)
-		makeModelPart(model, baseCFrame, "GlassBridge", v(0.34, 0.12, 0.1), v(0, 1.5, 0.66), glassColor, Enum.Material.Glass)
+		makeModelPart(model, baseCFrame, "GlassL", Vector3.new(0.65, 0.65, 0.12), Vector3.new(-0.45, 0.45, 0.92), Color3.fromRGB(30, 30, 35), Enum.Material.SmoothPlastic)
+		makeModelPart(model, baseCFrame, "GlassR", Vector3.new(0.65, 0.65, 0.12), Vector3.new(0.45, 0.45, 0.92), Color3.fromRGB(30, 30, 35), Enum.Material.SmoothPlastic)
+		makeModelPart(model, baseCFrame, "GlassBridge", Vector3.new(0.3, 0.12, 0.12), Vector3.new(0, 0.5, 0.92), Color3.fromRGB(30, 30, 35), Enum.Material.SmoothPlastic)
 	elseif feature == "Moon" then
-		makeModelPart(model, baseCFrame, "Moon", v(0.95, 0.95, 0.95), v(0.95, 3.0, 0), Color3.fromRGB(240, 230, 180), Enum.Material.Neon, Enum.PartType.Ball)
+		makeModelPart(model, baseCFrame, "MoonProp", Vector3.new(0.8, 0.8, 0.8), Vector3.new(0.7, 1.9, 0), Color3.fromRGB(245, 240, 200), Enum.Material.Neon, Enum.PartType.Ball)
 	elseif feature == "Orb" then
-		makeModelPart(model, baseCFrame, "Orb", v(0.85, 0.85, 0.85), v(0, 3.05, 0), accent, Enum.Material.Neon, Enum.PartType.Ball)
+		makeModelPart(model, baseCFrame, "OrbProp", Vector3.new(0.85, 0.85, 0.85), Vector3.new(0, 2.0, 0), accent, Enum.Material.Neon, Enum.PartType.Ball)
 	elseif feature == "Bagel" then
-		local ring = makeModelPart(model, baseCFrame, "BagelRing", v(1.55, 0.48, 1.55), v(0, 2.35, 0), character.BodyColor, Enum.Material.SmoothPlastic, Enum.PartType.Cylinder)
-		ring.CFrame = ring.CFrame * CFrame.Angles(0, 0, math.rad(90))
-		local hole = makeModelPart(model, baseCFrame, "BagelHole", v(0.62, 0.54, 0.62), v(0, 2.35, 0), accent, Enum.Material.SmoothPlastic, Enum.PartType.Cylinder)
-		hole.CFrame = hole.CFrame * CFrame.Angles(0, 0, math.rad(90))
+		makeModelPart(model, baseCFrame, "BagelRing", Vector3.new(1.4, 0.45, 1.4), Vector3.new(0, 1.45, 0), characterEntry.BodyColor, Enum.Material.SmoothPlastic, Enum.PartType.Cylinder)
+		makeModelPart(model, baseCFrame, "BagelHole", Vector3.new(0.5, 0.5, 0.5), Vector3.new(0, 1.45, 0), Color3.fromRGB(60, 45, 30), Enum.Material.SmoothPlastic, Enum.PartType.Cylinder)
 	elseif feature == "Waffle" then
-		makeModelPart(model, baseCFrame, "Waffle", v(1.35, 1.35, 0.26), v(0, 1.35, -0.82), Color3.fromRGB(230, 180, 100), Enum.Material.SmoothPlastic)
-		makeModelPart(model, baseCFrame, "WaffleStripeH", v(1.35, 0.16, 0.3), v(0, 1.35, -0.84), accent, Enum.Material.SmoothPlastic)
-		makeModelPart(model, baseCFrame, "WaffleStripeV", v(0.16, 1.35, 0.3), v(0, 1.35, -0.84), accent, Enum.Material.SmoothPlastic)
+		makeModelPart(model, baseCFrame, "WaffleProp", Vector3.new(1.5, 0.3, 1.5), Vector3.new(0, 1.4, 0), Color3.fromRGB(220, 165, 80), Enum.Material.SmoothPlastic)
+		makeModelPart(model, baseCFrame, "WaffleSyrup", Vector3.new(1.1, 0.34, 1.1), Vector3.new(0, 1.42, 0), accent, Enum.Material.SmoothPlastic)
+	elseif feature == "Antenna" then
+		makeModelPart(model, baseCFrame, "AntennaStem", Vector3.new(0.14, 1.1, 0.14), Vector3.new(0, 1.6, 0), Color3.fromRGB(90, 90, 100), Enum.Material.Metal, Enum.PartType.Cylinder)
+		makeModelPart(model, baseCFrame, "AntennaTip", Vector3.new(0.45, 0.45, 0.45), Vector3.new(0, 2.25, 0), accent, Enum.Material.Neon, Enum.PartType.Ball)
+	elseif feature == "TopHat" then
+		makeModelPart(model, baseCFrame, "TopHatBrim", Vector3.new(1.7, 0.18, 1.7), Vector3.new(0, 1.15, 0), Color3.fromRGB(25, 25, 30), Enum.Material.SmoothPlastic, Enum.PartType.Cylinder)
+		makeModelPart(model, baseCFrame, "TopHatTop", Vector3.new(1.1, 0.95, 1.1), Vector3.new(0, 1.7, 0), Color3.fromRGB(25, 25, 30), Enum.Material.SmoothPlastic, Enum.PartType.Cylinder)
+		makeModelPart(model, baseCFrame, "TopHatBand", Vector3.new(1.16, 0.3, 1.16), Vector3.new(0, 1.35, 0), accent, Enum.Material.SmoothPlastic, Enum.PartType.Cylinder)
+	elseif feature == "Umbrella" then
+		local handle = makeModelPart(model, baseCFrame, "UmbrellaHandle", Vector3.new(0.14, 1.6, 0.14), Vector3.new(1.2, 0.6, 0), Color3.fromRGB(100, 70, 40), Enum.Material.Wood, Enum.PartType.Cylinder)
+		handle.CFrame = baseCFrame * CFrame.new(1.2, 0.6, 0) * CFrame.Angles(0, 0, math.rad(20))
+		makeModelPart(model, baseCFrame, "UmbrellaCanopy", Vector3.new(2.4, 0.35, 2.4), Vector3.new(1.45, 1.5, 0), accent, Enum.Material.SmoothPlastic, Enum.PartType.Cylinder)
+	elseif feature == "Rocket" then
+		makeModelPart(model, baseCFrame, "RocketBody", Vector3.new(0.8, 1.7, 0.8), Vector3.new(0, 0.5, -0.95), Color3.fromRGB(250, 250, 250), Enum.Material.SmoothPlastic, Enum.PartType.Cylinder)
+		makeModelPart(model, baseCFrame, "RocketCap", Vector3.new(0.7, 0.7, 0.7), Vector3.new(0, 1.55, -0.95), accent, Enum.Material.SmoothPlastic, Enum.PartType.Ball)
+		makeModelPart(model, baseCFrame, "RocketFlame", Vector3.new(0.45, 0.7, 0.45), Vector3.new(0, -0.6, -0.95), Color3.fromRGB(255, 130, 30), Enum.Material.Neon, Enum.PartType.Cylinder)
+	elseif feature == "IceCream" then
+		makeModelPart(model, baseCFrame, "ConeProp", Vector3.new(0.55, 0.9, 0.55), Vector3.new(1.2, 0.1, 0.3), Color3.fromRGB(215, 175, 110), Enum.Material.SmoothPlastic, Enum.PartType.Cylinder)
+		makeModelPart(model, baseCFrame, "ScoopProp", Vector3.new(0.85, 0.85, 0.85), Vector3.new(1.2, 0.85, 0.3), accent, Enum.Material.SmoothPlastic, Enum.PartType.Ball)
+	elseif feature == "Mushroom" then
+		makeModelPart(model, baseCFrame, "MushroomStem", Vector3.new(0.5, 0.6, 0.5), Vector3.new(0, 1.3, 0), Color3.fromRGB(245, 240, 225), Enum.Material.SmoothPlastic, Enum.PartType.Cylinder)
+		makeModelPart(model, baseCFrame, "MushroomCap", Vector3.new(1.6, 0.7, 1.6), Vector3.new(0, 1.75, 0), accent, Enum.Material.SmoothPlastic, Enum.PartType.Ball)
+		makeModelPart(model, baseCFrame, "MushroomDotL", Vector3.new(0.28, 0.28, 0.28), Vector3.new(-0.4, 1.95, 0.25), Color3.fromRGB(255, 255, 255), Enum.Material.SmoothPlastic, Enum.PartType.Ball)
+		makeModelPart(model, baseCFrame, "MushroomDotR", Vector3.new(0.28, 0.28, 0.28), Vector3.new(0.45, 1.9, -0.2), Color3.fromRGB(255, 255, 255), Enum.Material.SmoothPlastic, Enum.PartType.Ball)
 	end
 end
 
-local function buildInfoLabel(model, body, character, mutationName, showCost, scale)
-	local gui = Instance.new("BillboardGui")
-	gui.Name = "InfoLabel"
-	gui.Size = UDim2.fromOffset(230, showCost and 104 or 82)
-	gui.StudsOffset = Vector3.new(0, 1.35 * scale + 0.9, 0)
-	gui.AlwaysOnTop = true
-	gui.MaxDistance = 140
-	gui.Adornee = body
-
-	local layout = Instance.new("UIListLayout")
-	layout.FillDirection = Enum.FillDirection.Vertical
-	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-	layout.SortOrder = Enum.SortOrder.LayoutOrder
-	layout.Parent = gui
-
-	local function addLine(text, size, color, order)
-		local label = Instance.new("TextLabel")
-		label.LayoutOrder = order
-		label.Size = UDim2.new(1, 0, 0, size + 4)
-		label.BackgroundTransparency = 1
-		label.Text = text
-		label.TextSize = size
-		label.TextColor3 = color
-		label.Font = Enum.Font.GothamBold
-		label.TextStrokeTransparency = 0.4
-		label.Parent = gui
-		return label
-	end
-
-	local income = BrainrotCatalog.GetIncomePerSecond(character, mutationName)
-	addLine(BrainrotCatalog.GetDisplayName(character, mutationName), 16, Color3.fromRGB(255, 255, 255), 1)
-	addLine(character.Rarity, 13, BrainrotCatalog.GetRarityColor(character.Rarity), 2)
-	addLine("$" .. formatMoney(income) .. "/s", 14, Color3.fromRGB(130, 255, 150), 3)
-	if showCost then
-		addLine("$" .. formatMoney(character.Cost), 14, Color3.fromRGB(255, 220, 90), 4)
-	end
-	gui.Parent = body
-end
-
-function BrainrotSpawner.BuildBrainrotModel(character, mutationName, position, yaw, showCost, scaleOverride)
+function BrainrotSpawner.BuildBrainrotModel(characterEntry, mutationName, position, yaw, showCost, scaleOverride)
 	local scale = scaleOverride or MODEL_SCALE
-	mutationName = mutationName or "None"
-	local baseCFrame = CFrame.new(position) * CFrame.Angles(0, yaw or 0, 0)
-	local function v(x, y, z)
-		return Vector3.new(x * scale, y * scale, z * scale)
-	end
-
 	local model = Instance.new("Model")
-	model.Name = character.Id
+	model.Name = characterEntry.Id
 
-	local bodyColor = character.BodyColor
-	if mutationName ~= "None" then
+	local baseCFrame = CFrame.new(position) * CFrame.Angles(0, math.rad(yaw or 0), 0)
+
+	local bodyColor = characterEntry.BodyColor
+	local tintBody = mutationName == "Golden" or mutationName == "Diamond" or mutationName == "Candy" or mutationName == "Void"
+	if tintBody then
 		bodyColor = BrainrotCatalog.GetMutationColor(mutationName)
 	end
 
-	local body = makeModelPart(model, baseCFrame, "Body", v(1.7, 2.1, 1.25), v(0, 1.05, 0), bodyColor, Enum.Material.SmoothPlastic)
+	local scaleFactor = scale / MODEL_SCALE
+	local body = makeModelPart(model, baseCFrame, "Body", Vector3.new(1.7 * scaleFactor, 1.9 * scaleFactor, 1.2 * scaleFactor), Vector3.new(0, 0, 0), bodyColor, Enum.Material.SmoothPlastic)
 	model.PrimaryPart = body
 
-	-- Face: two eyes and a grin on the +Z side.
-	local eyeColor = Color3.fromRGB(25, 25, 35)
-	makeModelPart(model, baseCFrame, "EyeL", v(0.24, 0.3, 0.1), v(-0.42, 1.5, 0.64), eyeColor, Enum.Material.SmoothPlastic)
-	makeModelPart(model, baseCFrame, "EyeR", v(0.24, 0.3, 0.1), v(0.42, 1.5, 0.64), eyeColor, Enum.Material.SmoothPlastic)
-	makeModelPart(model, baseCFrame, "Mouth", v(0.6, 0.12, 0.1), v(0, 1.05, 0.64), eyeColor, Enum.Material.SmoothPlastic)
-	-- Arms and feet in the accent colour.
-	makeModelPart(model, baseCFrame, "ArmL", v(0.36, 1.15, 0.42), v(-1.04, 1.15, 0), character.AccentColor, Enum.Material.SmoothPlastic)
-	makeModelPart(model, baseCFrame, "ArmR", v(0.36, 1.15, 0.42), v(1.04, 1.15, 0), character.AccentColor, Enum.Material.SmoothPlastic)
-	makeModelPart(model, baseCFrame, "FootL", v(0.56, 0.3, 0.85), v(-0.46, 0.15, 0.12), character.AccentColor, Enum.Material.SmoothPlastic)
-	makeModelPart(model, baseCFrame, "FootR", v(0.56, 0.3, 0.85), v(0.46, 0.15, 0.12), character.AccentColor, Enum.Material.SmoothPlastic)
-
-	addCharacterFeature(model, baseCFrame, character, scale)
-	buildInfoLabel(model, body, character, mutationName, showCost, scale)
-
-	if showCost then
-		local detector = Instance.new("ClickDetector")
-		detector.MaxActivationDistance = 32
-		detector.MouseClick:Connect(function(player)
-			local beltId = model:GetAttribute("BeltId")
-			if beltId then
-				BrainrotSpawner.ClickedCallback(player, beltId)
-			end
-		end)
-		detector.Parent = body
+	local eyeColor = Color3.fromRGB(25, 25, 30)
+	local eyeMaterial = Enum.Material.SmoothPlastic
+	if mutationName == "Void" then
+		eyeColor = characterEntry.AccentColor
+		eyeMaterial = Enum.Material.Neon
 	end
+	makeModelPart(model, baseCFrame, "EyeL", Vector3.new(0.28, 0.4, 0.12), Vector3.new(-0.4, 0.4, 0.62), eyeColor, eyeMaterial, Enum.PartType.Ball)
+	makeModelPart(model, baseCFrame, "EyeR", Vector3.new(0.28, 0.4, 0.12), Vector3.new(0.4, 0.4, 0.62), eyeColor, eyeMaterial, Enum.PartType.Ball)
+	makeModelPart(model, baseCFrame, "FootL", Vector3.new(0.6, 0.35, 0.9), Vector3.new(-0.45, -1.1, 0.1), characterEntry.AccentColor, Enum.Material.SmoothPlastic)
+	makeModelPart(model, baseCFrame, "FootR", Vector3.new(0.6, 0.35, 0.9), Vector3.new(0.45, -1.1, 0.1), characterEntry.AccentColor, Enum.Material.SmoothPlastic)
+
+	addCharacterFeature(model, baseCFrame, characterEntry)
+
+	-- Billboard label.
+	local gui = Instance.new("BillboardGui")
+	gui.Name = "Label"
+	gui.Size = UDim2.fromOffset(240, showCost and 90 or 70)
+	gui.StudsOffset = Vector3.new(0, 3.2, 0)
+	gui.AlwaysOnTop = true
+	gui.Parent = body
+	local label = Instance.new("TextLabel")
+	label.Name = "Text"
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 0.35
+	label.BackgroundColor3 = Color3.fromRGB(30, 28, 40)
+	label.Font = Enum.Font.FredokaOne
+	label.TextSize = 16
+	label.TextColor3 = Color3.fromRGB(255, 255, 255)
+	local income = BrainrotCatalog.GetIncomePerSecond(characterEntry, mutationName)
+	local displayName = BrainrotCatalog.GetDisplayName(characterEntry, mutationName)
+	if showCost then
+		label.Text = displayName .. "\n" .. characterEntry.Rarity .. "  $" .. income .. "/s\n$" .. characterEntry.Cost
+	else
+		label.Text = displayName .. "\n" .. characterEntry.Rarity .. "  $" .. income .. "/s"
+	end
+	label.Parent = gui
+	-- Colour the label's rarity feel via the text colour of the name line is
+	-- not separable in one label, so tint the background edge instead.
+	gui.Adornee = body
 
 	if mutationName == "Rainbow" then
 		task.spawn(function()
+			local hue = 0
 			while model.Parent do
-				body.Color = Color3.fromHSV((os.clock() % 6) / 6, 0.65, 1)
+				hue = (hue + 0.01) % 1
+				body.Color = Color3.fromHSV(hue, 0.75, 1)
+				task.wait(0.1)
+			end
+		end)
+	elseif mutationName == "Galaxy" then
+		task.spawn(function()
+			local violet = BrainrotCatalog.GetMutationColor("Galaxy")
+			local cyan = Color3.fromRGB(90, 230, 255)
+			local t = 0
+			while model.Parent do
+				t += 0.02
+				local blend = (math.sin(t) + 1) / 2
+				body.Color = violet:Lerp(cyan, blend)
 				task.wait(0.1)
 			end
 		end)
@@ -201,28 +184,31 @@ function BrainrotSpawner.BuildBrainrotModel(character, mutationName, position, y
 	return model
 end
 
--- ---------------------------------------------------------------------------
--- The belt
--- ---------------------------------------------------------------------------
-
 function BrainrotSpawner.SpawnBrainrotOnConveyor()
 	if #beltEntries >= BrainrotCatalog.MaxBeltBrainrots then
 		return
 	end
 	local rarityName = BrainrotCatalog.RollRarity()
-	local character = BrainrotCatalog.PickRandomCharacterOfRarity(rarityName)
+	local characterEntry = BrainrotCatalog.PickRandomCharacterOfRarity(rarityName)
 	local mutationName = BrainrotCatalog.RollMutation()
+	local beltId = nextBeltId
 	nextBeltId += 1
-	local model = BrainrotSpawner.BuildBrainrotModel(
-		character, mutationName,
-		Vector3.new(BrainrotCatalog.BeltStartX, BELT_Y, 0),
-		0, true
-	)
-	model:SetAttribute("BeltId", nextBeltId)
-	model.Parent = beltFolder or Workspace
+	local model = BrainrotSpawner.BuildBrainrotModel(characterEntry, mutationName, Vector3.new(BrainrotCatalog.BeltStartX, BrainrotCatalog.BeltTopY + 2, 0), 90, true)
+	model:SetAttribute("BeltId", beltId)
+	local detector = Instance.new("ClickDetector")
+	detector.MaxActivationDistance = 32
+	detector.Parent = model.PrimaryPart
+	detector.MouseClick:Connect(function(player)
+		BrainrotSpawner.ClickedCallback(player, beltId)
+	end)
+	if beltFolder then
+		model.Parent = beltFolder
+	else
+		model.Parent = Workspace
+	end
 	table.insert(beltEntries, {
-		Id = nextBeltId,
-		CharacterId = character.Id,
+		Id = beltId,
+		CharacterId = characterEntry.Id,
 		Mutation = mutationName,
 		Model = model,
 		X = BrainrotCatalog.BeltStartX,
@@ -245,9 +231,10 @@ function BrainrotSpawner.RemoveBeltBrainrot(beltId)
 				entry.Model:Destroy()
 			end
 			table.remove(beltEntries, index)
-			return
+			return true
 		end
 	end
+	return false
 end
 
 function BrainrotSpawner.ClearAllBeltBrainrots()
@@ -260,57 +247,58 @@ function BrainrotSpawner.ClearAllBeltBrainrots()
 end
 
 function BrainrotSpawner.GetBeltBrainrotsForClient()
-	local list = {}
+	local out = {}
 	for _, entry in ipairs(beltEntries) do
-		local character = BrainrotCatalog.GetCharacterById(entry.CharacterId)
-		if character then
-			table.insert(list, {
+		local characterEntry = BrainrotCatalog.GetCharacterById(entry.CharacterId)
+		if characterEntry then
+			table.insert(out, {
 				Id = entry.Id,
 				CharacterId = entry.CharacterId,
-				Name = BrainrotCatalog.GetDisplayName(character, entry.Mutation),
-				Rarity = character.Rarity,
-				Rate = BrainrotCatalog.GetIncomePerSecond(character, entry.Mutation),
-				Cost = character.Cost,
+				Name = BrainrotCatalog.GetDisplayName(characterEntry, entry.Mutation),
+				Rarity = characterEntry.Rarity,
+				Rate = BrainrotCatalog.GetIncomePerSecond(characterEntry, entry.Mutation),
+				Cost = characterEntry.Cost,
 				Mutation = entry.Mutation,
 			})
 		end
 	end
-	return list
+	return out
 end
 
-local function stepBelt(deltaTime)
-	if #beltEntries == 0 then
-		return
+function BrainrotSpawner.Init(map)
+	worldMap = map
+	beltFolder = Workspace:FindFirstChild("Belt")
+	if not beltFolder then
+		beltFolder = Instance.new("Folder")
+		beltFolder.Name = "Belt"
+		beltFolder.Parent = Workspace
 	end
-	local expired = {}
-	for _, entry in ipairs(beltEntries) do
-		entry.X += BrainrotCatalog.BeltSpeedStudsPerSecond * deltaTime
-		if entry.X > BrainrotCatalog.BeltEndX then
-			table.insert(expired, entry.Id)
-		elseif entry.Model then
-			entry.Model:PivotTo(CFrame.new(entry.X, BELT_Y, 0))
-		end
-	end
-	for _, beltId in ipairs(expired) do
-		BrainrotSpawner.RemoveBeltBrainrot(beltId)
-	end
-end
-
-function BrainrotSpawner.Init(_worldMap)
-	if initialised then
-		return
-	end
-	initialised = true
-	beltFolder = Instance.new("Folder")
-	beltFolder.Name = "Belt"
-	beltFolder.Parent = Workspace
-
-	RunService.Heartbeat:Connect(stepBelt)
-
 	task.spawn(function()
 		while true do
-			BrainrotSpawner.SpawnBrainrotOnConveyor()
 			task.wait(BrainrotCatalog.SpawnIntervalSeconds)
+			BrainrotSpawner.SpawnBrainrotOnConveyor()
+		end
+	end)
+	RunService.Heartbeat:Connect(function(deltaTime)
+		local step = BrainrotCatalog.BeltSpeedStudsPerSecond * deltaTime
+		for index = #beltEntries, 1, -1 do
+			local entry = beltEntries[index]
+			entry.X += step
+			if entry.X > BrainrotCatalog.BeltEndX then
+				if entry.Model then
+					entry.Model:Destroy()
+				end
+				table.remove(beltEntries, index)
+			elseif entry.Model and entry.Model.PrimaryPart then
+				local current = entry.Model.PrimaryPart.Position
+				local target = Vector3.new(entry.X, current.Y, current.Z)
+				local delta = target - current
+				for _, part in ipairs(entry.Model:GetDescendants()) do
+					if part:IsA("BasePart") then
+						part.Position += delta
+					end
+				end
+			end
 		end
 	end)
 end

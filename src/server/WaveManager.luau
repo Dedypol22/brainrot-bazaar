@@ -1,25 +1,37 @@
 -- WaveManager.luau
--- The tsunami event. Every few minutes a glowing wall of water sweeps the
--- plaza from west to east. Anyone caught outside their own base when it has
--- passed gets washed back to spawn — so when the banner drops, run home.
+-- Rotating plaza events, alternating forever: the sambal tsunami sweeps
+-- everyone caught outside a base back to spawn, then chili rain drops
+-- cash peppers all over the plaza.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 
 local BrainrotCatalog = require(ReplicatedStorage:WaitForChild("BrainrotCatalog"))
 local BaseManager = require(script.Parent:WaitForChild("BaseManager"))
-local BrainrotSpawner = require(script.Parent:WaitForChild("BrainrotSpawner"))
+local PlayerData = require(script.Parent:WaitForChild("PlayerData"))
 
 local WaveManager = {}
 
 local WAVE_START_X = -170
 local WAVE_END_X = 170
 local WAVE_SPEED = 45
-local WAVE_Y = 10 -- centre height while sweeping, so the wall towers over the plaza
-local PARKED_POSITION = Vector3.new(-170, -60, 0)
 
 local remotes = nil
 local worldMap = nil
+local chiliFolder = nil
+
+local function showBannerToAll(message)
+	if remotes and remotes.ShowBanner then
+		remotes.ShowBanner:FireAllClients(message)
+	end
+end
+
+local function showMessage(player, message)
+	if remotes and remotes.ShowMessage then
+		remotes.ShowMessage:FireClient(player, message)
+	end
+end
 
 local function sweepWaveAcrossPlaza()
 	local wavePart = worldMap and worldMap.WavePart
@@ -30,52 +42,150 @@ local function sweepWaveAcrossPlaza()
 	local duration = distance / WAVE_SPEED
 	local steps = math.max(1, math.floor(duration / 0.05))
 	for step = 0, steps do
-		local fraction = step / steps
-		local x = WAVE_START_X + distance * fraction
-		wavePart.Position = Vector3.new(x, WAVE_Y, 0)
+		local x = WAVE_START_X + distance * (step / steps)
+		wavePart.Position = Vector3.new(x, 8, 0)
 		task.wait(0.05)
 	end
-	wavePart.Position = PARKED_POSITION
+	wavePart.Position = Vector3.new(-170, -40, 0)
 end
 
 local function pushPlayersOutsideBasesBackToSpawn()
-	if not worldMap then
+	if not worldMap or not worldMap.SpawnPosition then
 		return
 	end
 	for _, player in ipairs(Players:GetPlayers()) do
-		local character = player.Character
-		local root = character and character:FindFirstChild("HumanoidRootPart")
-		if root and not BaseManager.IsPositionInsideOwnBase(player, root.Position) then
-			character:PivotTo(CFrame.new(worldMap.SpawnPosition))
+		local characterModel = player.Character
+		local root = characterModel and characterModel:FindFirstChild("HumanoidRootPart")
+		if root then
+			if not BaseManager.IsPositionInsideOwnBase(player, root.Position) then
+				root.CFrame = CFrame.new(worldMap.SpawnPosition)
+			end
 		end
 	end
 end
 
-local function runOneTsunamiEvent()
-	if remotes and remotes.ShowBanner then
-		remotes.ShowBanner:FireAllClient("TSUNAMI INCOMING")
-	end
-	local halfway = BrainrotCatalog.WaveWarningSeconds / 2
-	task.wait(halfway)
-	if remotes and remotes.ShowBanner then
-		remotes.ShowBanner:FireAllClient("GET TO YOUR BASE!")
-	end
-	task.wait(BrainrotCatalog.WaveWarningSeconds - halfway)
-
+local function runSambalTsunami()
+	showBannerToAll("SAMBAL TSUNAMI INCOMING")
+	task.wait(BrainrotCatalog.WaveWarningSeconds)
 	sweepWaveAcrossPlaza()
 	pushPlayersOutsideBasesBackToSpawn()
+end
+
+local function findPlayerFromPart(part)
+	local model = part
+	while model and model ~= Workspace do
+		if model:IsA("Model") then
+			local player = Players:GetPlayerFromCharacter(model)
+			if player then
+				return player
+			end
+		end
+		model = model.Parent
+	end
+	return nil
+end
+
+local function spawnChiliPepper()
+	if not chiliFolder then
+		chiliFolder = Instance.new("Folder")
+		chiliFolder.Name = "ChiliRain"
+		chiliFolder.Parent = Workspace
+	end
+	local range = BrainrotCatalog.PlazaRadius * 0.8
+	local x = math.random(-range * 10, range * 10) / 10
+	local z = math.random(-range * 10, range * 10) / 10
+	if math.abs(z) < 8 then
+		if z >= 0 then
+			z = 8 + math.random(0, 40) / 10
+		else
+			z = -8 - math.random(0, 40) / 10
+		end
+	end
+	local pepper = Instance.new("Part")
+	pepper.Name = "ChiliFalling"
+	pepper.Size = Vector3.new(0.7, 1.4, 0.7)
+	pepper.Position = Vector3.new(x, 35, z)
+	pepper.Color = Color3.fromRGB(220, 40, 30)
+	pepper.Material = Enum.Material.SmoothPlastic
+	pepper.Anchored = true
+	pepper.CanCollide = false
+	pepper.Parent = chiliFolder
+	local stem = Instance.new("Part")
+	stem.Name = "Stem"
+	stem.Size = Vector3.new(0.3, 0.5, 0.3)
+	stem.Position = pepper.Position + Vector3.new(0, 0.9, 0)
+	stem.Color = Color3.fromRGB(60, 160, 60)
+	stem.Material = Enum.Material.SmoothPlastic
+	stem.Anchored = true
+	stem.CanCollide = false
+	stem.Parent = pepper
+
+	task.spawn(function()
+		local claimed = false
+		while pepper.Parent and pepper.Position.Y > 1.2 do
+			local drop = math.min(28 * 0.05, pepper.Position.Y - 1.2)
+			pepper.Position -= Vector3.new(0, drop, 0)
+			stem.Position -= Vector3.new(0, drop, 0)
+			task.wait(0.05)
+		end
+		if not pepper.Parent then
+			return
+		end
+		pepper.Name = "ChiliPickup"
+		local value = math.random(BrainrotCatalog.ChiliPickupValueMin, BrainrotCatalog.ChiliPickupValueMax)
+		pepper:SetAttribute("Value", value)
+		pepper.Touched:Connect(function(hit)
+			if claimed then
+				return
+			end
+			local player = findPlayerFromPart(hit)
+			if not player then
+				return
+			end
+			local data = PlayerData.Get(player)
+			if not data then
+				return
+			end
+			claimed = true
+			data.Cash += value
+			PlayerData.Sync(player)
+			showMessage(player, "+$" .. value .. " chili bonus!")
+			pepper:Destroy()
+		end)
+		task.delay(BrainrotCatalog.ChiliPickupLifetimeSeconds, function()
+			if pepper.Parent then
+				pepper:Destroy()
+			end
+		end)
+	end)
+end
+
+local function runChiliRain()
+	showBannerToAll("CHILI RAIN! GRAB THE PEPPERS!")
+	task.wait(BrainrotCatalog.WaveWarningSeconds)
+	local elapsed = 0
+	while elapsed < BrainrotCatalog.ChiliRainDurationSeconds do
+		spawnChiliPepper()
+		task.wait(0.7)
+		elapsed += 0.7
+	end
 end
 
 function WaveManager.Init(remoteFolder, map)
 	remotes = remoteFolder
 	worldMap = map
-	-- BrainrotSpawner is required so the module graph matches the other
-	-- managers; the wave itself does not spawn anything.
-	local _ = BrainrotSpawner
+	chiliFolder = Workspace:FindFirstChild("ChiliRain")
+	if not chiliFolder then
+		chiliFolder = Instance.new("Folder")
+		chiliFolder.Name = "ChiliRain"
+		chiliFolder.Parent = Workspace
+	end
 	task.spawn(function()
 		while true do
-			task.wait(BrainrotCatalog.WaveIntervalSeconds)
-			runOneTsunamiEvent()
+			task.wait(BrainrotCatalog.EventIntervalSeconds)
+			runSambalTsunami()
+			task.wait(BrainrotCatalog.EventIntervalSeconds)
+			runChiliRain()
 		end
 	end)
 end
