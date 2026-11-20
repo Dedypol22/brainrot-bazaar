@@ -1,8 +1,9 @@
 import { copyFileSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { buildDossier } from "./vendor/makefun-roblox.ts";
 
-const root = process.cwd();
+const root = dirname(fileURLToPath(import.meta.url));
 const outputDir = process.env.MAKEFUN_OUTPUT_DIR || "/output";
 
 mkdirSync(outputDir, { recursive: true });
