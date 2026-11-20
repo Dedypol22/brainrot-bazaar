@@ -1,6 +1,4 @@
--- Main.server.luau
--- Brainrot Bazaar server bootstrap: remotes, world build, manager init,
--- player join/leave wiring and autosave.
+-- Main: wire the bazaar together on the server.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -16,9 +14,6 @@ local StealManager = require(script.Parent:WaitForChild("StealManager"))
 local ThiefManager = require(script.Parent:WaitForChild("ThiefManager"))
 local WaveManager = require(script.Parent:WaitForChild("WaveManager"))
 
--- Keep an explicit reference so the require graph is fully loaded here.
-local _rebirthLoaded = RebirthManager ~= nil
-
 local remoteNames = {
 	"RequestBuy",
 	"RequestSell",
@@ -31,15 +26,19 @@ local remoteNames = {
 	"ShowMessage",
 }
 
-local remoteFolder = Instance.new("Folder")
-remoteFolder.Name = "Remotes"
-remoteFolder.Parent = ReplicatedStorage
+local remotesFolder = ReplicatedStorage:FindFirstChild("Remotes")
+if remotesFolder then
+	remotesFolder:Destroy()
+end
+remotesFolder = Instance.new("Folder")
+remotesFolder.Name = "Remotes"
+remotesFolder.Parent = ReplicatedStorage
 
 local remotes = {}
 for _, remoteName in ipairs(remoteNames) do
 	local remote = Instance.new("RemoteEvent")
 	remote.Name = remoteName
-	remote.Parent = remoteFolder
+	remote.Parent = remotesFolder
 	remotes[remoteName] = remote
 end
 
@@ -72,7 +71,9 @@ local function onPlayerRemoving(player)
 	PlayerData.Unload(player)
 end
 
-Players.PlayerAdded:Connect(onPlayerAdded)
+Players.PlayerAdded:Connect(function(player)
+	task.spawn(onPlayerAdded, player)
+end)
 Players.PlayerRemoving:Connect(onPlayerRemoving)
 
 for _, player in ipairs(Players:GetPlayers()) do
@@ -90,4 +91,4 @@ game:BindToClose(function()
 	PlayerData.SaveAllPlayers()
 end)
 
-print("[BrainrotBazaar] Server started: " .. #worldMap.Plots .. " plots, " .. #BrainrotCatalog.Characters .. " brainrots in the catalogue.")
+print("[Brainrot Bazaar] Server started with " .. tostring(#worldMap.Plots) .. " plots and " .. tostring(#BrainrotCatalog.Characters) .. " brainrots.")

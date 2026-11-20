@@ -1,6 +1,4 @@
--- RebirthManager.luau
--- Rebirth: at $1,000,000 total earned, reset cash and brainrots for a
--- permanent +25% income multiplier per rebirth. The Prize Book survives.
+-- RebirthManager: reset cash and base for a permanent income multiplier.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -20,10 +18,7 @@ end
 
 function RebirthManager.CanRebirth(player)
 	local data = PlayerData.Get(player)
-	if not data then
-		return false
-	end
-	return data.TotalEarned >= BrainrotCatalog.RebirthCashThreshold
+	return data ~= nil and data.TotalEarned >= BrainrotCatalog.RebirthCashThreshold
 end
 
 function RebirthManager.TryRebirth(player)
@@ -36,7 +31,7 @@ function RebirthManager.TryRebirth(player)
 	data.TotalEarned = 0
 	PlayerData.ClearOwnedBrainrots(player)
 	BaseManager.ClearAllBaseBrainrots(player)
-	-- SlotsBought, Index and IndexRewardsClaimed are kept on purpose.
+	-- SlotsBought, Index and IndexRewardsClaimed all survive rebirth.
 	PlayerData.Sync(player)
 	return true
 end

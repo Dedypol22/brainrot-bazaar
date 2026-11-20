@@ -1,7 +1,4 @@
--- EconomyManager.luau
--- The money loop: per-second income, Prize Book milestone prizes, plot
--- sign refresh and state snapshots, plus the buy / sell / slot / lock
--- request handlers.
+-- EconomyManager: income ticks, buying, selling, slots, locks, rebirth and state snapshots.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -17,6 +14,7 @@ local ThiefManager = require(script.Parent:WaitForChild("ThiefManager"))
 local EconomyManager = {}
 
 local remotes = nil
+local initialized = false
 
 local function showMessage(player, message)
 	if remotes and remotes.ShowMessage then
@@ -37,9 +35,9 @@ function EconomyManager.CalculateIncomePerSecond(player)
 	end
 	local total = 0
 	for _, entry in ipairs(data.Owned) do
-		local characterEntry = BrainrotCatalog.GetCharacterById(entry.CharacterId)
-		if characterEntry then
-			total += BrainrotCatalog.GetIncomePerSecond(characterEntry, entry.Mutation)
+		local character = BrainrotCatalog.GetCharacterById(entry.CharacterId)
+		if character then
+			total += BrainrotCatalog.GetIncomePerSecond(character, entry.Mutation)
 		end
 	end
 	return math.floor(total * RebirthManager.GetIncomeMultiplier(player))
@@ -50,44 +48,56 @@ function EconomyManager.BuildStateSnapshot(player)
 	if not data then
 		return nil
 	end
+
+	local income = EconomyManager.CalculateIncomePerSecond(player)
 	local slots = PlayerData.GetTotalSlots(player)
-	local ownedList = {}
+
+	local owned = {}
 	for _, entry in ipairs(data.Owned) do
-		local characterEntry = BrainrotCatalog.GetCharacterById(entry.CharacterId)
-		if characterEntry then
-			table.insert(ownedList, {
+		local character = BrainrotCatalog.GetCharacterById(entry.CharacterId)
+		if character then
+			table.insert(owned, {
 				Slot = entry.Slot,
 				CharacterId = entry.CharacterId,
-				Name = BrainrotCatalog.GetDisplayName(characterEntry, entry.Mutation),
-				Rarity = characterEntry.Rarity,
-				Rate = BrainrotCatalog.GetIncomePerSecond(characterEntry, entry.Mutation),
+				Name = BrainrotCatalog.GetDisplayName(character, entry.Mutation),
+				Rarity = character.Rarity,
+				Rate = BrainrotCatalog.GetIncomePerSecond(character, entry.Mutation),
 				Mutation = entry.Mutation,
-				Cost = characterEntry.Cost,
+				Cost = character.Cost,
 			})
 		end
 	end
-	table.sort(ownedList, function(a, b)
+	table.sort(owned, function(a, b)
 		return a.Slot < b.Slot
 	end)
-	local indexList = {}
+
+	local index = {}
 	for characterId in pairs(data.Index) do
-		table.insert(indexList, characterId)
+		table.insert(index, characterId)
 	end
+	table.sort(index)
+
+	local nextSlotCost = nil
+	if slots < BrainrotCatalog.MaxSlotCount then
+		nextSlotCost = BrainrotCatalog.GetNextSlotCost(data.SlotsBought)
+	end
+
 	local indexCount = PlayerData.GetIndexCount(player)
+
 	return {
 		Cash = math.floor(data.Cash),
-		IncomePerSecond = EconomyManager.CalculateIncomePerSecond(player),
+		IncomePerSecond = income,
 		Rebirths = data.Rebirths,
 		TotalEarned = math.floor(data.TotalEarned),
 		Slots = slots,
-		NextSlotCost = (slots < BrainrotCatalog.MaxSlotCount) and BrainrotCatalog.GetNextSlotCost(data.SlotsBought) or nil,
-		Owned = ownedList,
+		NextSlotCost = nextSlotCost,
+		Owned = owned,
 		Belt = BrainrotSpawner.GetBeltBrainrotsForClient(),
 		Carrying = StealManager.GetCarrySummary(player),
 		Lock = BaseManager.GetLockStatus(player),
 		RebirthThreshold = BrainrotCatalog.RebirthCashThreshold,
 		RebirthMultiplier = RebirthManager.GetIncomeMultiplier(player),
-		Index = indexList,
+		Index = index,
 		IndexCount = indexCount,
 		IndexTotal = #BrainrotCatalog.Characters,
 		NextMilestone = BrainrotCatalog.GetNextIndexMilestone(indexCount, data.IndexRewardsClaimed),
@@ -96,11 +106,11 @@ function EconomyManager.BuildStateSnapshot(player)
 end
 
 function EconomyManager.SendStateUpdate(player)
-	if not remotes or not remotes.StateUpdate then
+	local snapshot = EconomyManager.BuildStateSnapshot(player)
+	if not snapshot then
 		return
 	end
-	local snapshot = EconomyManager.BuildStateSnapshot(player)
-	if snapshot then
+	if remotes and remotes.StateUpdate then
 		remotes.StateUpdate:FireClient(player, snapshot)
 	end
 end
@@ -112,124 +122,121 @@ end
 function EconomyManager.TryBuyBeltBrainrot(player, beltId)
 	local data = PlayerData.Get(player)
 	if not data then
-		return false
-	end
-	local entry = BrainrotSpawner.GetBeltBrainrotById(beltId)
-	if not entry then
-		showMessage(player, "That brainrot is gone!")
-		return false
+		return
 	end
 	if StealManager.IsCarrying(player) then
-		showMessage(player, "Carry what you have home first!")
-		return false
+		showMessage(player, "You are already carrying a brainrot!")
+		return
 	end
-	local characterEntry = BrainrotCatalog.GetCharacterById(entry.CharacterId)
-	if not characterEntry then
-		return false
+
+	local entry = BrainrotSpawner.GetBeltBrainrotById(beltId)
+	if not entry then
+		showMessage(player, "That brainrot is already gone!")
+		return
 	end
-	if data.Cash < characterEntry.Cost then
-		showMessage(player, "Not enough cash")
-		return false
+	local character = BrainrotCatalog.GetCharacterById(entry.CharacterId)
+	if not character then
+		return
 	end
+	if data.Cash < character.Cost then
+		showMessage(player, "Not enough cash!")
+		return
+	end
+
 	local freeSlot = PlayerData.FindFreeSlot(player)
 	if not freeSlot then
 		showMessage(player, "Your base is full! Buy another slot.")
-		return false
+		return
 	end
-	data.Cash -= characterEntry.Cost
-	PlayerData.Sync(player)
+
+	data.Cash -= character.Cost
 	BrainrotSpawner.RemoveBeltBrainrot(beltId)
-	StealManager.StartPurchaseCarry(player, characterEntry, entry.Mutation, freeSlot)
-	showMessage(player, "Carry " .. BrainrotCatalog.GetDisplayName(characterEntry, entry.Mutation) .. " home to your base!")
+	StealManager.StartPurchaseCarry(player, character, entry.Mutation, freeSlot)
+	PlayerData.Sync(player)
 	EconomyManager.SendStateUpdate(player)
-	return true
 end
 
 function EconomyManager.TrySellBrainrot(player, slotIndex)
 	local data = PlayerData.Get(player)
 	if not data then
-		return false
+		return
 	end
 	local owned = PlayerData.GetOwnedAtSlot(player, slotIndex)
 	if not owned then
-		return false
+		showMessage(player, "Nothing to sell there.")
+		return
 	end
-	local characterEntry = BrainrotCatalog.GetCharacterById(owned.CharacterId)
-	if not characterEntry then
-		return false
+	local character = BrainrotCatalog.GetCharacterById(owned.CharacterId)
+	if not character then
+		return
 	end
-	local refund = math.floor(characterEntry.Cost * BrainrotCatalog.SellRefundFraction)
+
+	local refund = math.floor(character.Cost * BrainrotCatalog.SellRefundFraction)
+	data.Cash += refund
 	PlayerData.RemoveOwnedBrainrot(player, slotIndex)
 	BaseManager.RemoveBrainrotFromBase(player, slotIndex)
-	data.Cash += refund
 	PlayerData.Sync(player)
-	showMessage(player, "Sold for $" .. refund)
+	showMessage(player, "Sold for $" .. tostring(refund) .. ".")
 	EconomyManager.SendStateUpdate(player)
-	return true
 end
 
 function EconomyManager.TryBuyExtraSlot(player)
 	local data = PlayerData.Get(player)
 	if not data then
-		return false
+		return
 	end
-	if PlayerData.GetTotalSlots(player) >= BrainrotCatalog.MaxSlotCount then
-		showMessage(player, "Your base is already max size!")
-		return false
+	local slots = PlayerData.GetTotalSlots(player)
+	if slots >= BrainrotCatalog.MaxSlotCount then
+		showMessage(player, "Every base slot is already unlocked!")
+		return
 	end
+
 	local cost = BrainrotCatalog.GetNextSlotCost(data.SlotsBought)
 	if not cost then
-		return false
+		return
 	end
 	if data.Cash < cost then
-		showMessage(player, "Not enough cash")
-		return false
+		showMessage(player, "Not enough cash for another slot!")
+		return
 	end
+
 	data.Cash -= cost
 	data.SlotsBought += 1
+	local newTotal = PlayerData.GetTotalSlots(player)
+	BaseManager.RevealExtraSlot(player, newTotal)
 	PlayerData.Sync(player)
-	BaseManager.RevealExtraSlot(player, PlayerData.GetTotalSlots(player))
 	showMessage(player, "New base slot unlocked!")
 	EconomyManager.SendStateUpdate(player)
-	return true
 end
 
 function EconomyManager.TryLockBase(player)
 	if BaseManager.LockBase(player) then
-		showMessage(player, "Base locked for " .. BrainrotCatalog.LockDurationSeconds .. " seconds!")
+		showMessage(player, "Base locked for " .. tostring(BrainrotCatalog.LockDurationSeconds) .. " seconds!")
 	else
-		showMessage(player, "Lock is on cooldown!")
+		showMessage(player, "Your lock is on cooldown!")
 	end
 	EconomyManager.SendStateUpdate(player)
-	return true
 end
 
-local function payIndexMilestones(player, data)
-	local nextMilestone = BrainrotCatalog.GetNextIndexMilestone(PlayerData.GetIndexCount(player), data.IndexRewardsClaimed)
-	while nextMilestone and PlayerData.GetIndexCount(player) >= nextMilestone.Count do
-		data.IndexRewardsClaimed += 1
-		data.Cash += nextMilestone.Reward
-		data.TotalEarned += nextMilestone.Reward
-		showBanner(player, "PRIZE BOOK MILESTONE!")
-		showMessage(player, "+$" .. nextMilestone.Reward .. " — " .. nextMilestone.Count .. " brainrots in your Prize Book!")
-		nextMilestone = BrainrotCatalog.GetNextIndexMilestone(PlayerData.GetIndexCount(player), data.IndexRewardsClaimed)
-	end
+local function refreshAfterRebirth(player)
+	EconomyManager.SendStateUpdate(player)
 end
 
 function EconomyManager.Init(remoteFolder)
+	if initialized then
+		return
+	end
+	initialized = true
 	remotes = remoteFolder
+
 	if remotes.RequestBuy then
 		remotes.RequestBuy.OnServerEvent:Connect(function(player, beltId)
-			if typeof(beltId) == "number" then
-				EconomyManager.TryBuyBeltBrainrot(player, beltId)
-			end
+			EconomyManager.TryBuyBeltBrainrot(player, beltId)
 		end)
 	end
 	if remotes.RequestSell then
 		remotes.RequestSell.OnServerEvent:Connect(function(player, slotIndex)
-			if typeof(slotIndex) == "number" then
-				EconomyManager.TrySellBrainrot(player, slotIndex)
-			end
+			EconomyManager.TrySellBrainrot(player, slotIndex)
 		end)
 	end
 	if remotes.RequestBuySlot then
@@ -245,25 +252,37 @@ function EconomyManager.Init(remoteFolder)
 	if remotes.RequestRebirth then
 		remotes.RequestRebirth.OnServerEvent:Connect(function(player)
 			if RebirthManager.TryRebirth(player) then
-				showMessage(player, "Rebirth complete! Income boosted.")
+				showBanner(player, "REBIRTH!")
+				showMessage(player, "You rebirthed! Income bonus is now +" .. tostring(math.floor((RebirthManager.GetIncomeMultiplier(player) - 1) * 100)) .. "%.")
+				refreshAfterRebirth(player)
 			else
-				showMessage(player, "Earn $" .. BrainrotCatalog.RebirthCashThreshold .. " total to rebirth.")
+				showMessage(player, "You need $" .. tostring(BrainrotCatalog.RebirthCashThreshold) .. " total earned to rebirth.")
 			end
-			EconomyManager.SendStateUpdate(player)
 		end)
 	end
+
 	task.spawn(function()
 		while true do
 			task.wait(1)
 			for _, player in ipairs(Players:GetPlayers()) do
 				local data = PlayerData.Get(player)
-				if data and PlayerData.IsLoaded(player) then
+				if data then
 					local income = EconomyManager.CalculateIncomePerSecond(player)
-					if income > 0 then
-						data.Cash += income
-						data.TotalEarned += income
+					data.Cash += income
+					data.TotalEarned += income
+
+					local indexCount = PlayerData.GetIndexCount(player)
+					local nextMilestone = BrainrotCatalog.GetNextIndexMilestone(indexCount, data.IndexRewardsClaimed)
+					while nextMilestone and indexCount >= nextMilestone.Count do
+						data.IndexRewardsClaimed += 1
+						data.Cash += nextMilestone.Reward
+						data.TotalEarned += nextMilestone.Reward
+						showBanner(player, "PRIZE BOOK MILESTONE!")
+						showMessage(player, "+$" .. tostring(nextMilestone.Reward) .. " — " .. tostring(nextMilestone.Count) .. " brainrots in your Prize Book!")
+						indexCount = PlayerData.GetIndexCount(player)
+						nextMilestone = BrainrotCatalog.GetNextIndexMilestone(indexCount, data.IndexRewardsClaimed)
 					end
-					payIndexMilestones(player, data)
+
 					PlayerData.Sync(player)
 					BaseManager.UpdatePlotSign(player, income)
 					EconomyManager.SendStateUpdate(player)

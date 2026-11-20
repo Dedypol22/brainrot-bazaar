@@ -4,27 +4,31 @@
 
 # Brainrot Bazaar
 
-A 3D Roblox brainrot tycoon built as a Rojo project. Brainrots ride a conveyor belt through the plaza; buy one, carry it home to your base, and it earns cash every second while it sits on its pad.
+A 3D Roblox brainrot tycoon built as a Rojo project. Fifty-two original brainrots
+span seven rarities (Common through Divine), and seven mutations can land on any
+catch: Golden x2, Candy x3, Diamond x5, Crystal x8, Rainbow x10, Galaxy x15 and
+Void x25.
 
-**The roster:** 44 original brainrots across 7 rarities — Common, Rare, Epic, Legendary, Mythic, Secret and Divine — from Bananaphone Barry ($150) up to Chef of the Cosmos ($18,000,000). Six mutations can roll on any spawn: Golden (x2), Candy (x3), Diamond (x5), Rainbow (x10), Galaxy (x15) and Void (x25).
-
-**Play loop:**
-
-- Buy from the belt and carry your catch home; bases hold 4 brainrots, expandable to 10 with extra slots.
-- Steal from rivals by clicking a brainrot on their base and carrying it home — and lock your own base (45 s lock, 2 min cooldown). A base that was just robbed is shielded for 30 s.
-- The **Prize Book** collection index tracks every brainrot you have ever owned and pays cash prizes at 11, 22, 33 and 44 collected ($25,000 / $100,000 / $400,000 / $2,000,000). It survives rebirth.
-- Raccoon thieves sneak in from the bandit gate and grab a base's cheapest brainrot. Bop one for $250 and the stolen brainrot goes back to its owner; if it escapes through the gate, the brainrot is gone.
-- Rotating plaza events: the **sambal tsunami** sweeps everyone caught outside a base back to spawn, and **chili rain** drops cash peppers (worth $100–$500 each) all over the plaza.
-- Rebirth at $1,000,000 total earned for +25% income each time. Progress saves through DataStore.
+Buy brainrots from the conveyor belt, carry your catch home to your base, and
+sell or upgrade as the income rolls in. Rival players can steal from your base by
+clicking a placed brainrot, so lock it for 45 seconds (2 minute cooldown) and
+remember that every base gets a 30 second shield after a robbery. The Prize Book
+index records every brainrot you have ever owned and pays cash prizes at 13, 26,
+39 and 52 collected. Raccoon thieves sneak in from the bandit gate; bop one for
+$250 and recover its loot. The plaza also rotates events: the sambal tsunami
+sweeps anyone caught outside a base back to spawn, and chili rain drops cash
+peppers. Rebirth at $1,000,000 total earned for +25% income each time. Progress
+saves through DataStore.
 
 ## Layout
 
-- `src/shared/BrainrotCatalog.luau` — roster, rarities, mutations and tuning.
-- `src/server/` — `Main.server.luau` bootstrap plus `MapBuilder`, `BaseManager`, `BrainrotSpawner`, `EconomyManager`, `PlayerData`, `RebirthManager`, `StealManager`, `ThiefManager` and `WaveManager`.
-- `src/client/ClientMain.client.luau` — the HUD, including the Prize Book panel.
-- `main.ts` — the make.fun entrypoint that assembles the submission dossier.
-- `default.project.json` — the Rojo project; `game.rbxl` is its built output.
+- `src/shared/BrainrotCatalog.luau` — tuning, rarities, mutations, the 52 characters and helpers.
+- `src/server/Main.server.luau` — server bootstrap and remotes.
+- `src/server/` — `MapBuilder`, `BaseManager`, `BrainrotSpawner`, `EconomyManager`,
+  `PlayerData`, `RebirthManager`, `StealManager`, `ThiefManager`, `WaveManager`.
+- `src/client/ClientMain.client.luau` — the HUD, belt/base lists and Prize Book.
+- `main.ts` — packages the place, source and screenshots into the make.fun output.
 
 ## Publishing
 
-The place is published from Roblox Studio from `game.rbxl` / the Rojo project.
+The place is published from Roblox Studio using `game.rbxl` / the Rojo project.

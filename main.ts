@@ -1,58 +1,45 @@
-// Brainrot Bazaar — make.fun entrypoint.
-// Copies the built place and its sources into the output directory and
-// writes the dossier the scorer expects. Deterministic: no timestamps,
-// no randomness, stable ordering everywhere.
-
-import { cpSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { copyFileSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { buildDossier } from "./vendor/makefun-roblox.ts";
 
-const repoRoot = dirname(fileURLToPath(import.meta.url));
+const root = process.cwd();
 const outputDir = process.env.MAKEFUN_OUTPUT_DIR || "/output";
 
 mkdirSync(outputDir, { recursive: true });
 
-const skipHidden = (source: string): boolean => {
-  const name = source.split(/[\\/]/).pop() ?? "";
-  return !name.startsWith(".");
-};
+let filesCopied = 0;
 
-function copyIntoOutput(relativePath: string): void {
-  const from = join(repoRoot, relativePath);
-  if (!existsSync(from)) {
-    return;
-  }
-  cpSync(from, join(outputDir, relativePath), {
-    recursive: true,
-    filter: skipHidden,
-  });
+function copyFile(source: string, destination: string): void {
+  copyFileSync(source, destination);
+  filesCopied += 1;
 }
 
-copyIntoOutput("game.rbxl");
-copyIntoOutput("PLAY.json");
-copyIntoOutput("src");
-copyIntoOutput("screenshots");
-
-const dossier = buildDossier(outputDir, { text_max_bytes: 65536 });
-writeFileSync(join(outputDir, "dossier.json"), dossier);
-
-function countCopiedFiles(dir: string): number {
-  let total = 0;
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.name.startsWith(".")) continue;
-    if (entry.isDirectory()) total += countCopiedFiles(join(dir, entry.name));
-    else if (entry.isFile()) total += 1;
+function copyTree(sourceDir: string, destinationDir: string): void {
+  mkdirSync(destinationDir, { recursive: true });
+  for (const entry of readdirSync(sourceDir, { withFileTypes: true })) {
+    if (entry.name.startsWith(".")) {
+      continue;
+    }
+    const source = join(sourceDir, entry.name);
+    const destination = join(destinationDir, entry.name);
+    if (entry.isDirectory()) {
+      copyTree(source, destination);
+    } else if (entry.isFile()) {
+      copyFile(source, destination);
+    }
   }
-  return total;
 }
 
-const copiedCount =
-  countCopiedFiles(join(outputDir, "src")) +
-  countCopiedFiles(join(outputDir, "screenshots")) +
-  (existsSync(join(outputDir, "game.rbxl")) ? 1 : 0) +
-  (existsSync(join(outputDir, "PLAY.json")) ? 1 : 0);
+copyFile(join(root, "game.rbxl"), join(outputDir, "game.rbxl"));
+copyFile(join(root, "PLAY.json"), join(outputDir, "PLAY.json"));
+copyTree(join(root, "src"), join(outputDir, "src"));
+copyTree(join(root, "screenshots"), join(outputDir, "screenshots"));
 
-console.log(
-  `Brainrot Bazaar: copied ${copiedCount} files; dossier written to ${join(outputDir, "dossier.json")}`,
-);
+const dossier = buildDossier(root, { text_max_bytes: 65536 });
+if (typeof dossier === "string") {
+  writeFileSync(join(outputDir, "dossier.json"), dossier, "utf8");
+} else {
+  writeFileSync(join(outputDir, "dossier.json"), dossier);
+}
+
+console.log(`Wrote Brainrot Bazaar to ${outputDir} (${filesCopied} files copied plus dossier.json).`);
